@@ -53,20 +53,7 @@ export default function App() {
 
   useEffect(() => {
     setPiReady(initPi());
-    fetchCases().then((rows) => {
-      const mapped = rows.map((row) => ({
-        id: row.case_code,
-        dbId: row.id,
-        title: row.title,
-        status: row.status,
-        lastSeen: "Chưa có dữ liệu",
-        radius: "Chưa tính",
-        confidence: 0,
-        priority: "Mới"
-      }));
-      setLiveCases(mapped);
-      if (mapped.length) setActiveCase(mapped[0]);
-    }).catch(() => {});
+    loadCases().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -86,12 +73,30 @@ export default function App() {
 
   const zoneScore = useMemo(() => zones.length ? Math.max(...zones.map(z=>z.score)) : Math.max(...demoZones.map(z=>z.score)), [zones]);
 
+  async function loadCases() {
+    const rows = await fetchCases();
+    const mapped = rows.map((row) => ({
+      id: row.case_code,
+      dbId: row.id,
+      title: row.title,
+      status: row.status,
+      lastSeen: "Chưa có dữ liệu",
+      radius: "Chưa tính",
+      confidence: 0,
+      priority: "Mới"
+    }));
+    setLiveCases(mapped);
+    if (mapped.length) setActiveCase(mapped[0]);
+    return mapped;
+  }
+
   async function signIn() {
     try {
       const profile = await authenticatePi();
       setUser(profile);
+      await loadCases();
     } catch (error) {
-      alert("Không thể đăng nhập Pi lúc này. Bạn vẫn có thể xem giao diện demo.");
+      alert("Không thể đăng nhập Pi hoặc tải dữ liệu lúc này.");
     }
   }
 
@@ -147,7 +152,7 @@ export default function App() {
           </div>
 
           <div className="case-list">
-            {[...liveCases, ...demoCases].map((item) => (
+            {(liveCases.length ? liveCases : demoCases).map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveCase(item)}
