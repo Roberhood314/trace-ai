@@ -43,7 +43,7 @@ ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "vi
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.1.0-rc1",
+    version="1.2.0-rc1",
     description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
 )
 
@@ -77,7 +77,7 @@ def ensure_case(db: Session, case_id: int) -> Case:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.1.0-rc1"}
+    return {"status": "ok", "service": "trace-ai", "version": "1.2.0-rc1"}
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
@@ -291,6 +291,33 @@ def ai_summary(case_id: int, db: Session = Depends(get_db), user: CurrentUser = 
         zone_order=zone_order,
     )
 
+
+
+@app.get("/public/wanted", response_model=list[WantedRecordOut])
+def public_wanted_records(q: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 250))
+    stmt = select(WantedRecord).order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(or_(
+            WantedRecord.full_name.ilike(term),
+            WantedRecord.registered_address.ilike(term),
+            WantedRecord.offense.ilike(term),
+            WantedRecord.warrant_reference.ilike(term),
+            WantedRecord.issuing_unit.ilike(term),
+        ))
+    return list(db.scalars(stmt.limit(limit)).all())
+
+@app.get("/public/wanted/source-status")
+def public_wanted_source_status(db: Session = Depends(get_db)):
+    latest = db.scalar(select(WantedRecord).order_by(WantedRecord.last_seen_at.desc()).limit(1))
+    count = len(list(db.scalars(select(WantedRecord.id)).all()))
+    return {
+        "source_name": SOURCE_NAME,
+        "source_url": OFFICIAL_WANTED_URL,
+        "records": count,
+        "last_sync": latest.last_seen_at if latest else None,
+    }
 
 @app.get("/wanted", response_model=list[WantedRecordOut])
 def list_wanted_records(
