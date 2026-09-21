@@ -187,19 +187,13 @@ def _dnn_page_meta(html: str, page_url: str) -> tuple[int, str | None, dict[str,
     return total_pages, pager_target, hidden, action_url
 
 
-async def fetch_official_list(
+async def iter_official_list_pages(
     start_url: str,
     status: str,
     max_pages: int = 250,
-) -> tuple[list[dict], int]:
-    """Fetch a DNN/ASP.NET paged public list while preserving postback state.
-
-    The official portal uses multipart/form-data postbacks with VIEWSTATE rather
-    than ordinary page links. Each response contains the next state, so pages are
-    fetched sequentially using a single cookie-preserving client.
-    """
+):
+    """Yield one parsed DNN page at a time so callers can commit incrementally."""
     max_pages = max(1, min(int(max_pages), 500))
-    all_records: dict[str, dict] = {}
     headers = {
         "User-Agent": "TRACE-AI/1.5 (+official public-data sync; source attribution retained)",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
@@ -208,18 +202,15 @@ async def fetch_official_list(
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=headers) as client:
         response = await client.get(start_url)
         response.raise_for_status()
-
         current_url = str(response.url)
-        records, _ = parse_wanted_page(response.text, current_url, status=status)
-        for record in records:
-            all_records[record["source_key"]] = record
 
+        records, _ = parse_wanted_page(response.text, current_url, status=status)
         total_pages, pager_target, hidden, action_url = _dnn_page_meta(response.text, current_url)
         pages_to_fetch = min(total_pages, max_pages)
-        visited_pages = 1
+        yield 1, total_pages, records
 
         if pages_to_fetch <= 1 or not pager_target:
-            return list(all_records.values()), visited_pages
+            return
 
         for page_number in range(2, pages_to_fetch + 1):
             form_fields = dict(hidden)
@@ -242,9 +233,7 @@ async def fetch_official_list(
                 )
 
             records, _ = parse_wanted_page(response.text, current_url, status=status)
-            for record in records:
-                all_records[record["source_key"]] = record
-            visited_pages += 1
+            yield page_number, total_pages, records
 
             next_total, next_target, next_hidden, next_action = _dnn_page_meta(response.text, current_url)
             if next_target:
@@ -253,9 +242,23 @@ async def fetch_official_list(
                 hidden = next_hidden
             if next_action:
                 action_url = next_action
-            if next_total and page_number >= min(next_total, pages_to_fetch):
-                break
+            if next_total:
+                total_pages = next_total
 
+
+async def fetch_official_list(
+    start_url: str,
+    status: str,
+    max_pages: int = 250,
+) -> tuple[list[dict], int]:
+    all_records: dict[str, dict] = {}
+    visited_pages = 0
+    async for page_number, total_pages, records in iter_official_list_pages(
+        start_url, status, max_pages=max_pages
+    ):
+        visited_pages = page_number
+        for record in records:
+            all_records[record["source_key"]] = record
     return list(all_records.values()), visited_pages
 
 
