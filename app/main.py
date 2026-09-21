@@ -8,11 +8,11 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
-from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User
+from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User, WantedRecord
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -20,8 +20,10 @@ from .schemas import (
     SearchZoneCreate, SearchZoneOut,
     TimelineEventCreate, TimelineEventOut,
     UserOut, UserRoleUpdate,
+    WantedRecordOut, WantedSyncOut,
 )
 from .security import CurrentUser, Role, issue_token, require_role
+from .services.wanted_sync import OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, utcnow_naive
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -41,7 +43,7 @@ ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "vi
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.0.0-rc1",
+    version="1.1.0-rc1",
     description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
 )
 
@@ -75,7 +77,7 @@ def ensure_case(db: Session, case_id: int) -> Case:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.0.0-rc1"}
+    return {"status": "ok", "service": "trace-ai", "version": "1.1.0-rc1"}
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
@@ -287,4 +289,79 @@ def ai_summary(case_id: int, db: Session = Depends(get_db), user: CurrentUser = 
         summary=" ".join(summary_parts),
         recommended_checks=checks,
         zone_order=zone_order,
+    )
+
+
+@app.get("/wanted", response_model=list[WantedRecordOut])
+def list_wanted_records(
+    q: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    limit = max(1, min(limit, 250))
+    stmt = select(WantedRecord).order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(or_(
+            WantedRecord.full_name.ilike(term),
+            WantedRecord.registered_address.ilike(term),
+            WantedRecord.offense.ilike(term),
+            WantedRecord.warrant_reference.ilike(term),
+            WantedRecord.issuing_unit.ilike(term),
+        ))
+    return list(db.scalars(stmt.limit(limit)).all())
+
+@app.get("/wanted/source-status")
+def wanted_source_status(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    latest = db.scalar(select(WantedRecord).order_by(WantedRecord.last_seen_at.desc()).limit(1))
+    count = len(list(db.scalars(select(WantedRecord.id)).all()))
+    return {
+        "source_name": SOURCE_NAME,
+        "source_url": OFFICIAL_WANTED_URL,
+        "records": count,
+        "last_sync": latest.last_seen_at if latest else None,
+    }
+
+@app.post("/wanted/sync", response_model=WantedSyncOut)
+async def sync_wanted_records(
+    pages: int = 3,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    try:
+        records, fetched_pages = await fetch_official_wanted(max_pages=pages)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"official wanted source unavailable: {exc.__class__.__name__}")
+
+    now = utcnow_naive()
+    inserted = 0
+    updated = 0
+    for item in records:
+        row = db.scalar(select(WantedRecord).where(WantedRecord.source_key == item["source_key"]))
+        if row is None:
+            row = WantedRecord(**item, imported_at=now, last_seen_at=now)
+            db.add(row)
+            inserted += 1
+        else:
+            for field, value in item.items():
+                setattr(row, field, value)
+            row.last_seen_at = now
+            updated += 1
+
+    add_audit(
+        db, user, "wanted_sync", "wanted_source", None,
+        f"source={OFFICIAL_WANTED_URL};pages={fetched_pages};records={len(records)}"
+    )
+    db.commit()
+    return WantedSyncOut(
+        source=OFFICIAL_WANTED_URL,
+        fetched_pages=fetched_pages,
+        parsed_records=len(records),
+        inserted=inserted,
+        updated=updated,
+        synced_at=datetime.now(timezone.utc),
     )
