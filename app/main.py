@@ -3,11 +3,12 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import or_, select
@@ -25,7 +26,7 @@ from .schemas import (
     WantedRecordOut, WantedSyncOut,
 )
 from .security import CurrentUser, Role, issue_token, require_role
-from .services.wanted_sync import OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, utcnow_naive
+from .services.wanted_sync import OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, parse_wanted_detail, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 
 def validate_runtime_config():
@@ -46,7 +47,7 @@ ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "vi
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.4.0-rc1",
+    version="1.4.1-rc1",
     description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
 )
 
@@ -119,7 +120,7 @@ async def start_wanted_auto_sync():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.4.0-rc1"}
+    return {"status": "ok", "service": "trace-ai", "version": "1.4.1-rc1"}
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
@@ -359,6 +360,56 @@ async def gateway_weather_public(lat: float, lon: float):
         raise HTTPException(status_code=422, detail=str(exc))
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"weather gateway unavailable: {exc.__class__.__name__}")
+
+@app.get("/public/wanted/{wanted_id}/image")
+async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
+    row = db.get(WantedRecord, wanted_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="wanted record not found")
+
+    image_url = row.image_url
+    headers = {
+        "User-Agent": "TRACE-AI/1.4 (+official public-data image proxy)",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": row.detail_url or row.source_url,
+    }
+
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+        if not image_url and row.detail_url:
+            detail_host = (urlparse(row.detail_url).hostname or "").lower()
+            if detail_host != "truyna.bocongan.gov.vn":
+                raise HTTPException(status_code=400, detail="unsupported official detail host")
+            detail = await client.get(row.detail_url)
+            detail.raise_for_status()
+            parsed = parse_wanted_detail(detail.text, str(detail.url))
+            image_url = parsed.get("image_url")
+            if image_url:
+                row.image_url = image_url
+                if parsed.get("danger_level"):
+                    row.danger_level = parsed["danger_level"]
+                db.commit()
+
+        if not image_url:
+            raise HTTPException(status_code=404, detail="official image not available")
+
+        image_host = (urlparse(image_url).hostname or "").lower()
+        if image_host != "truyna.bocongan.gov.vn":
+            raise HTTPException(status_code=400, detail="unsupported official image host")
+
+        response = await client.get(image_url)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "image/jpeg").split(";")[0].strip().lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=502, detail="official source did not return an image")
+
+    return Response(
+        content=response.content,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-TRACE-Image-Source": "truyna.bocongan.gov.vn",
+        },
+    )
 
 @app.get("/public/wanted", response_model=list[WantedRecordOut])
 def public_wanted_records(q: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
