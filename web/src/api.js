@@ -74,3 +74,16 @@ export async function fetchUsers() { return request("/users"); }
 export async function updateUser(userId, payload) {
   return request(`/users/${userId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 }
+
+export async function fetchWanted(q = "", limit = 100) {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  params.set("limit", String(limit));
+  return request(`/wanted?${params.toString()}`);
+}
+export async function fetchWantedSourceStatus() {
+  return request("/wanted/source-status");
+}
+export async function syncWanted(pages = 3) {
+  return request(`/wanted/sync?pages=${pages}`, { method: "POST" });
+}
