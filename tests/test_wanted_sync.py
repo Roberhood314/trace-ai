@@ -1,4 +1,4 @@
-from app.services.wanted_sync import parse_wanted_page
+from app.services.wanted_sync import parse_wanted_detail, parse_wanted_page
 
 HTML = """
 <html><body>
@@ -29,3 +29,15 @@ def test_parse_wanted_table():
     assert row["detail_url"] == "https://truyna.bocongan.gov.vn/detail/abc"
     assert row["source_key"]
     assert "https://truyna.bocongan.gov.vn/page/2" in pages
+
+
+def test_parse_wanted_detail():
+    html = """
+    <html><body>
+      <table><tr><td>Loại truy nã</td><td>Đặc biệt</td></tr></table>
+      <img alt="Ảnh đối tượng truy nã" src="/images/wanted/person.jpg" />
+    </body></html>
+    """
+    data = parse_wanted_detail(html, "https://truyna.bocongan.gov.vn/x/y")
+    assert data["danger_level"] == "cao"
+    assert data["image_url"] == "https://truyna.bocongan.gov.vn/images/wanted/person.jpg"
