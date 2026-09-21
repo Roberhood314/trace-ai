@@ -46,7 +46,7 @@ ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "vi
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.3.0-rc1",
+    version="1.4.0-rc1",
     description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
 )
 
@@ -119,7 +119,7 @@ async def start_wanted_auto_sync():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.3.0-rc1"}
+    return {"status": "ok", "service": "trace-ai", "version": "1.4.0-rc1"}
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
