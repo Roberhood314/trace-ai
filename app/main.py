@@ -62,6 +62,16 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Role"],
 )
 
+@app.middleware("http")
+async def public_read_cors(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/public/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type"
+        response.headers["Vary"] = "Origin"
+    return response
+
 class PiVerifyRequest(BaseModel):
     access_token: str
 
