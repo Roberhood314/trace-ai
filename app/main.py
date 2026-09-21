@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 import urllib.request
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -68,6 +69,8 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"}
 
 IMAGE_FETCH_SEMAPHORE = asyncio.Semaphore(6)
+IMAGE_CACHE_MAX = max(16, min(int(os.getenv("WANTED_IMAGE_CACHE_ITEMS", "128") or 128), 512))
+IMAGE_CACHE: OrderedDict[int, tuple[str, bytes]] = OrderedDict()
 
 app = FastAPI(
     title="TRACE-AI",
@@ -155,6 +158,7 @@ def _apply_wanted_records(db: Session, records: list[dict], actor: str, action: 
             continue
 
         old_checksum = row.checksum
+        old_status = row.status
         changed = old_checksum != item["checksum"]
         # last_seen_at proves the public source still contained this record.
         row.last_seen_at = now
@@ -165,7 +169,7 @@ def _apply_wanted_records(db: Session, records: list[dict], actor: str, action: 
             db.add(WantedRecordHistory(
                 wanted_record_id=row.id,
                 source_key=item["source_key"],
-                change_type="status_change" if row.status != item.get("status") else "update",
+                change_type="status_change" if old_status != item.get("status") else "update",
                 old_checksum=old_checksum,
                 new_checksum=item["checksum"],
                 snapshot_json=_wanted_snapshot(item),
@@ -503,6 +507,20 @@ async def gateway_weather_public(lat: float, lon: float):
 
 @app.get("/public/wanted/{wanted_id}/image")
 async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
+    cached = IMAGE_CACHE.get(wanted_id)
+    if cached:
+        IMAGE_CACHE.move_to_end(wanted_id)
+        content_type, image_bytes = cached
+        return Response(
+            content=image_bytes,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "X-TRACE-Image-Source": "cache",
+                "X-TRACE-Image-Normalized": "true",
+            },
+        )
+
     row = db.get(WantedRecord, wanted_id)
     if not row:
         raise HTTPException(status_code=404, detail="wanted record not found")
@@ -565,6 +583,11 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
             if end >= 0:
                 image_bytes = image_bytes[: end + len(marker)]
 
+    IMAGE_CACHE[wanted_id] = (content_type, image_bytes)
+    IMAGE_CACHE.move_to_end(wanted_id)
+    while len(IMAGE_CACHE) > IMAGE_CACHE_MAX:
+        IMAGE_CACHE.popitem(last=False)
+
     return Response(
         content=image_bytes,
         media_type=content_type,
@@ -586,10 +609,10 @@ async def public_wanted_image_data(wanted_id: int, db: Session = Depends(get_db)
         "source": "truyna.bocongan.gov.vn",
     }
 
-@app.get("/public/wanted", response_model=list[WantedRecordOut])
-def public_wanted_records(q: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
-    limit = max(1, min(limit, 250))
-    stmt = select(WantedRecord).order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
+def _wanted_query(q: str | None, status: str | None):
+    stmt = select(WantedRecord)
+    if status in {"active", "dinh_na"}:
+        stmt = stmt.where(WantedRecord.status == status)
     if q and q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where(or_(
@@ -599,90 +622,137 @@ def public_wanted_records(q: str | None = None, limit: int = 100, db: Session = 
             WantedRecord.warrant_reference.ilike(term),
             WantedRecord.issuing_unit.ilike(term),
         ))
-    return list(db.scalars(stmt.limit(limit)).all())
+    return stmt.order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
 
-@app.get("/public/wanted/source-status")
-def public_wanted_source_status(db: Session = Depends(get_db)):
+
+def _wanted_source_status(db: Session):
     latest = db.scalar(select(WantedRecord).order_by(WantedRecord.last_seen_at.desc()).limit(1))
-    count = len(list(db.scalars(select(WantedRecord.id)).all()))
+    total = len(list(db.scalars(select(WantedRecord.id)).all()))
+    active = len(list(db.scalars(select(WantedRecord.id).where(WantedRecord.status == "active")).all()))
+    suspended = len(list(db.scalars(select(WantedRecord.id).where(WantedRecord.status == "dinh_na")).all()))
+    history = len(list(db.scalars(select(WantedRecordHistory.id)).all()))
     return {
         "source_name": SOURCE_NAME,
         "source_url": OFFICIAL_WANTED_URL,
-        "records": count,
+        "suspended_source_url": OFFICIAL_SUSPENDED_URL,
+        "records": total,
+        "active_records": active,
+        "suspended_records": suspended,
+        "history_events": history,
         "last_sync": latest.last_seen_at if latest else None,
+        "sync_interval_minutes": max(30, int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "60") or 60)),
+        "full_sync_hours": max(6, int(os.getenv("WANTED_FULL_SYNC_HOURS", "24") or 24)),
+        "image_cache_items": len(IMAGE_CACHE),
+        "image_cache_limit": IMAGE_CACHE_MAX,
     }
+
+
+@app.get("/public/wanted", response_model=list[WantedRecordOut])
+def public_wanted_records(
+    q: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    return list(db.scalars(_wanted_query(q, status).offset(offset).limit(limit)).all())
+
+
+@app.get("/public/wanted/source-status")
+def public_wanted_source_status(db: Session = Depends(get_db)):
+    return _wanted_source_status(db)
 
 @app.get("/wanted", response_model=list[WantedRecordOut])
 def list_wanted_records(
     q: str | None = None,
+    status: str | None = None,
     limit: int = 100,
+    offset: int = 0,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
-    limit = max(1, min(limit, 250))
-    stmt = select(WantedRecord).order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
-    if q and q.strip():
-        term = f"%{q.strip()}%"
-        stmt = stmt.where(or_(
-            WantedRecord.full_name.ilike(term),
-            WantedRecord.registered_address.ilike(term),
-            WantedRecord.offense.ilike(term),
-            WantedRecord.warrant_reference.ilike(term),
-            WantedRecord.issuing_unit.ilike(term),
-        ))
-    return list(db.scalars(stmt.limit(limit)).all())
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    return list(db.scalars(_wanted_query(q, status).offset(offset).limit(limit)).all())
+
 
 @app.get("/wanted/source-status")
 def wanted_source_status(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
-    latest = db.scalar(select(WantedRecord).order_by(WantedRecord.last_seen_at.desc()).limit(1))
-    count = len(list(db.scalars(select(WantedRecord.id)).all()))
-    return {
-        "source_name": SOURCE_NAME,
-        "source_url": OFFICIAL_WANTED_URL,
-        "records": count,
-        "last_sync": latest.last_seen_at if latest else None,
-    }
+    return _wanted_source_status(db)
+
+
+@app.get("/wanted/{wanted_id}/history")
+def wanted_record_history(
+    wanted_id: int,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    limit = max(1, min(limit, 500))
+    return [
+        {
+            "id": h.id,
+            "wanted_record_id": h.wanted_record_id,
+            "source_key": h.source_key,
+            "change_type": h.change_type,
+            "old_checksum": h.old_checksum,
+            "new_checksum": h.new_checksum,
+            "snapshot_json": h.snapshot_json,
+            "changed_at": h.changed_at,
+        }
+        for h in db.scalars(
+            select(WantedRecordHistory)
+            .where(WantedRecordHistory.wanted_record_id == wanted_id)
+            .order_by(WantedRecordHistory.changed_at.desc())
+            .limit(limit)
+        ).all()
+    ]
+
 
 @app.post("/wanted/sync", response_model=WantedSyncOut)
 async def sync_wanted_records(
-    pages: int = 3,
+    full: bool = False,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_role(Role.COMMANDER)),
 ):
     try:
-        records, fetched_pages = await fetch_official_wanted(max_pages=pages, detail_limit=int(os.getenv("WANTED_DETAIL_LIMIT", "40") or 40))
+        if full:
+            pages = max(50, min(int(os.getenv("WANTED_FULL_SYNC_PAGES", "250") or 250), 500))
+            detail_limit = max(0, min(int(os.getenv("WANTED_FULL_DETAIL_LIMIT", "0") or 0), 200))
+        else:
+            pages = max(1, min(int(os.getenv("WANTED_DELTA_PAGES", "5") or 5), 25))
+            detail_limit = max(0, min(int(os.getenv("WANTED_DELTA_DETAIL_LIMIT", "10") or 10), 50))
+
+        records, fetched_pages = await fetch_official_wanted(
+            max_pages=pages,
+            detail_limit=detail_limit,
+            include_suspended=True,
+            suspended_pages=pages,
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"official wanted source unavailable: {exc.__class__.__name__}")
 
-    now = utcnow_naive()
-    inserted = 0
-    updated = 0
-    for item in records:
-        row = db.scalar(select(WantedRecord).where(WantedRecord.source_key == item["source_key"]))
-        if row is None:
-            row = WantedRecord(**item, imported_at=now, last_seen_at=now)
-            db.add(row)
-            inserted += 1
-        else:
-            for field, value in item.items():
-                setattr(row, field, value)
-            row.last_seen_at = now
-            updated += 1
-
-    add_audit(
-        db, user, "wanted_sync", "wanted_source", None,
-        f"source={OFFICIAL_WANTED_URL};pages={fetched_pages};records={len(records)}"
+    stats = _apply_wanted_records(
+        db,
+        records,
+        user.uid,
+        "wanted_full_sync" if full else "wanted_delta_sync",
+        fetched_pages,
     )
-    db.commit()
     return WantedSyncOut(
         source=OFFICIAL_WANTED_URL,
         fetched_pages=fetched_pages,
         parsed_records=len(records),
-        inserted=inserted,
-        updated=updated,
+        inserted=stats["inserted"],
+        updated=stats["updated"],
+        unchanged=stats["unchanged"],
+        active_records=stats["active_records"],
+        suspended_records=stats["suspended_records"],
         synced_at=datetime.now(timezone.utc),
     )
 
