@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import re
+import unicodedata
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 
@@ -17,15 +18,46 @@ def _source_key(detail_url: str | None, cells: list[str]) -> str:
     raw = detail_url or "|".join(cells)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+def _ascii_text(value: str | None) -> str:
+    text = unicodedata.normalize("NFD", _clean(value)).lower()
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+
 def parse_wanted_detail(html: str, page_url: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     image_url = None
-    for img in soup.find_all("img", src=True):
-        alt = _clean(img.get("alt"))
-        src = urljoin(page_url, img.get("src"))
-        if "Ảnh đối tượng truy nã" in alt or "anh doi tuong truy na" in alt.lower():
-            image_url = src
-            break
+    candidates: list[tuple[int, str]] = []
+    for img in soup.find_all("img"):
+        raw_src = img.get("src") or img.get("data-src") or img.get("data-original")
+        if not raw_src:
+            continue
+        src = urljoin(page_url, raw_src)
+        marker = " ".join([
+            _ascii_text(img.get("alt")),
+            _ascii_text(img.get("title")),
+            _ascii_text(img.get("class") if isinstance(img.get("class"), str) else " ".join(img.get("class") or [])),
+            _ascii_text(img.get("id")),
+        ])
+        src_key = _ascii_text(src)
+        score = 0
+        if "anh doi tuong truy na" in marker:
+            score += 100
+        if "truy na" in marker:
+            score += 40
+        if any(k in src_key for k in ("truyna", "truy-na", "doituong", "doi-tuong", "wanted")):
+            score += 20
+        if any(k in src_key for k in ("logo", "icon", "banner", "avatar-default", "no-image")):
+            score -= 80
+        width = str(img.get("width") or "")
+        height = str(img.get("height") or "")
+        if width.isdigit() and int(width) >= 120:
+            score += 5
+        if height.isdigit() and int(height) >= 120:
+            score += 5
+        candidates.append((score, src))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        if candidates[0][0] > 0:
+            image_url = candidates[0][1]
 
     danger_level = None
     for tr in soup.find_all("tr"):
