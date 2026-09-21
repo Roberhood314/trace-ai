@@ -1,6 +1,7 @@
 import asyncio
 import os
 import uuid
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -407,13 +408,20 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         if image_host != "truyna.bocongan.gov.vn":
             raise HTTPException(status_code=400, detail="unsupported official image host")
 
-        response = await client.get(image_url)
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "image/jpeg").split(";")[0].strip().lower()
+        def fetch_image_bytes():
+            request = urllib.request.Request(image_url)
+            with urllib.request.urlopen(request, timeout=15) as source:
+                return source.read(), source.headers.get("content-type", "image/jpeg")
+
+        try:
+            image_bytes, raw_content_type = await asyncio.to_thread(fetch_image_bytes)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"official image fetch failed: {exc.__class__.__name__}")
+
+        content_type = raw_content_type.split(";")[0].strip().lower()
         if not content_type.startswith("image/"):
             raise HTTPException(status_code=502, detail="official source did not return an image")
 
-        image_bytes = response.content
         if content_type in {"image/jpeg", "image/jpg"}:
             end = image_bytes.find(b"\\xff\\xd9")
             if end < 0:
