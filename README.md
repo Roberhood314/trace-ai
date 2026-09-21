@@ -3,7 +3,7 @@
 TRACE-AI là web app hỗ trợ quản lý vụ việc tìm kiếm/người mất tích, timeline dấu vết, bản đồ vùng tìm kiếm, chứng cứ và phân tích hỗ trợ. Frontend được thiết kế mobile-first cho Pi Browser/Pi App Studio; backend FastAPI đảm nhiệm xác thực, dữ liệu và audit.
 
 ## Release
-- Version: `1.0.0-rc1`
+- Version: `1.1.0-rc1`
 - Frontend: React + Vite + Leaflet + Pi SDK
 - Backend: FastAPI + SQLAlchemy
 - Dev DB: SQLite
@@ -20,6 +20,8 @@ TRACE-AI là web app hỗ trợ quản lý vụ việc tìm kiếm/người mấ
 - Audit log cho thao tác nhạy cảm.
 - Bảng quản trị quyền.
 - AI Search Assistant dạng tổng hợp/decision-support, không tự ra quyết định nghiệp vụ.
+- Radar tra soát truy nã dạng trực quan hóa dữ liệu.
+- Đồng bộ thủ công dữ liệu truy nã công khai từ `https://truyna.bocongan.gov.vn/Đối-tượng-truy-nã`, giữ nguyên nguồn và link hồ sơ chính thức.
 - Privacy Policy template và placeholder xác minh domain Pi.
 
 ## Không phải chức năng của bản release
@@ -62,3 +64,7 @@ npm run build
 Đọc [DEPLOYMENT.md](./DEPLOYMENT.md), [SECURITY.md](./SECURITY.md) và [PI_APP_STUDIO.md](./PI_APP_STUDIO.md) trước khi đưa dữ liệu thật vào hệ thống.
 
 **Bắt buộc:** đổi `APP_SECRET`, tắt `DEV_AUTH_BYPASS`, cấu hình HTTPS/CORS, khai báo bootstrap admin, dùng storage riêng cho evidence, cấu hình retention/backup và thay thông tin operator trong Privacy Policy.
+
+
+## Nguồn truy nã Bộ Công an
+TRACE-AI chỉ đồng bộ dữ liệu công khai được hiển thị trên Cổng thông tin truy nã của Bộ Công an. Việc đồng bộ được kích hoạt thủ công bởi role `commander` hoặc `admin`, giới hạn số trang mỗi lần để tránh tạo tải không cần thiết. Giao diện "radar" chỉ là trực quan hóa kết quả tra cứu trong dữ liệu đã nhập; không phải radar vật lý và không quét thiết bị/người ở gần.
