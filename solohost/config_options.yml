@@ -1,0 +1,34 @@
+title: TRACE-AI Configurator
+eyebrow: SoloHost App
+description: Cấu hình TRACE-AI cho môi trường SoloHost cục bộ.
+footer_hint: Dữ liệu ứng dụng được lưu trong Docker named volume trên máy cài đặt.
+output_file: .env
+after_save: >
+  Đã lưu cấu hình TRACE-AI. Khởi động hoặc cài đặt lại ứng dụng để áp dụng thay đổi.
+
+fields:
+  - name: APP_SECRET
+    label: Khóa bí mật ứng dụng
+    type: password
+    required: true
+    preserve_if_blank: true
+    help: Nhập một chuỗi bí mật dài, ngẫu nhiên để ký phiên đăng nhập TRACE-AI.
+    env_comment: Secret dùng để ký JWT/session của TRACE-AI.
+
+  - name: WANTED_AUTO_SYNC_MINUTES
+    label: Chu kỳ đồng bộ dữ liệu truy nã (phút)
+    type: number
+    default: "60"
+    help: Khoảng thời gian giữa các lần đồng bộ tự động. TRACE-AI chỉ chạy tự động khi giá trị từ 30 phút trở lên.
+
+  - name: WANTED_AUTO_SYNC_PAGES
+    label: Số trang nguồn mỗi lần đồng bộ
+    type: number
+    default: "3"
+    help: Số trang danh sách truy nã công khai được kiểm tra trong mỗi chu kỳ.
+
+  - name: WANTED_DETAIL_LIMIT
+    label: Số hồ sơ lấy thêm ảnh và chi tiết
+    type: number
+    default: "40"
+    help: Giới hạn số hồ sơ chi tiết được đọc thêm trong mỗi lần đồng bộ để giảm tải cho nguồn chính thức.
