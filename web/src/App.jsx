@@ -15,6 +15,9 @@ import {
 import { authenticatePi, initPi } from "./pi";
 import MapPanel from "./MapPanel";
 import CreateCaseModal from "./CreateCaseModal";
+import PersonPanel from "./PersonPanel";
+import EvidencePanel from "./EvidencePanel";
+import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones } from "./api";
 import { demoCases, demoTimeline, demoZones } from "./demoData";
 
 function Badge({ children, tone = "neutral" }) {
@@ -40,10 +43,43 @@ export default function App() {
   const [piReady, setPiReady] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [liveCases, setLiveCases] = useState([]);
+  const [person, setPerson] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [zones, setZones] = useState([]);
+  const [evidence, setEvidence] = useState([]);
 
   useEffect(() => {
     setPiReady(initPi());
+    fetchCases().then((rows) => {
+      const mapped = rows.map((row) => ({
+        id: row.case_code,
+        dbId: row.id,
+        title: row.title,
+        status: row.status,
+        lastSeen: "Chưa có dữ liệu",
+        radius: "Chưa tính",
+        confidence: 0,
+        priority: "Mới"
+      }));
+      setLiveCases(mapped);
+      if (mapped.length) setActiveCase(mapped[0]);
+    }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!activeCase?.dbId) {
+      setPerson(null); setTimeline([]); setZones([]); setEvidence([]);
+      return;
+    }
+    Promise.all([
+      fetchPerson(activeCase.dbId),
+      fetchTimeline(activeCase.dbId),
+      fetchZones(activeCase.dbId),
+      fetchEvidence(activeCase.dbId),
+    ]).then(([p, t, z, e]) => {
+      setPerson(p); setTimeline(t); setZones(z); setEvidence(e);
+    }).catch(() => {});
+  }, [activeCase?.dbId]);
 
   const zoneScore = useMemo(
     () => Math.max(...demoZones.map((z) => z.score)),
@@ -144,8 +180,10 @@ export default function App() {
           <div className="tabs">
             {[
               ["overview", "Tổng quan"],
+              ["profile", "Hồ sơ"],
               ["timeline", "Timeline"],
               ["zones", "Vùng tìm kiếm"],
+              ["evidence", "Chứng cứ"],
               ["ai", "AI phân tích"]
             ].map(([key, label]) => (
               <button
@@ -160,7 +198,7 @@ export default function App() {
 
           {tab === "overview" && (
             <div className="overview-grid">
-              <MapPanel />
+              <MapPanel timeline={timeline} zones={zones} />
 
               <div className="summary-card">
                 <h4>Thông tin nhanh</h4>
@@ -175,9 +213,13 @@ export default function App() {
             </div>
           )}
 
+          {tab === "profile" && (
+            <PersonPanel caseId={activeCase.dbId} person={person} onCreated={setPerson} />
+          )}
+
           {tab === "timeline" && (
             <div className="timeline">
-              {demoTimeline.map((item) => (
+              {(timeline.length ? timeline.map((x) => ({time: new Date(x.event_time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}), label: x.event_type, detail: x.description})) : demoTimeline).map((item) => (
                 <div className="timeline-item" key={item.time + item.label}>
                   <div className="time">{item.time}</div>
                   <div className="timeline-dot"></div>
@@ -192,7 +234,7 @@ export default function App() {
 
           {tab === "zones" && (
             <div className="zone-list">
-              {demoZones.map((zone) => (
+              {(zones.length ? zones.map((z) => ({name:z.name,score:z.score,radius:`${(z.radius_m/1000).toFixed(1)} km`,reason:z.rationale || "Chưa có giải thích"})) : demoZones).map((zone) => (
                 <div className="zone-card" key={zone.name}>
                   <div className="zone-score">{zone.score}</div>
                   <div className="zone-content">
@@ -206,6 +248,10 @@ export default function App() {
                 </div>
               ))}
             </div>
+          )}
+
+          {tab === "evidence" && (
+            <EvidencePanel caseId={activeCase.dbId} items={evidence} onUploaded={(item)=>setEvidence((prev)=>[item,...prev])} />
           )}
 
           {tab === "ai" && (
@@ -232,6 +278,7 @@ export default function App() {
           onCreated={(created) => {
             const uiCase = {
               id: created.case_code,
+              dbId: created.id,
               title: created.title,
               status: created.status || "open",
               lastSeen: "Chưa có dữ liệu",
