@@ -22,6 +22,7 @@ import ZonesPanel from "./ZonesPanel";
 import AIAnalysisPanel from "./AIAnalysisPanel";
 import AuditPanel from "./AuditPanel";
 import AdminPanel from "./AdminPanel";
+import WantedRadarPanel from "./WantedRadarPanel";
 import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones } from "./api";
 import { demoCases, demoZones } from "./demoData";
 
@@ -187,6 +188,7 @@ export default function App() {
           <div className="tabs">
             {[
               ["overview", "Tổng quan"],
+              ["wanted", "Radar truy nã"],
               ["profile", "Hồ sơ"],
               ["timeline", "Timeline"],
               ["zones", "Vùng tìm kiếm"],
@@ -220,6 +222,10 @@ export default function App() {
                 </div>
               </div>
             </div>
+          )}
+
+          {tab === "wanted" && (
+            <WantedRadarPanel role={user?.role || "viewer"} />
           )}
 
           {tab === "profile" && (
