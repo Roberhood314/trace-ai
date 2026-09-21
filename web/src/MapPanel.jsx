@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Circle, MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -10,23 +10,56 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
 
-export default function MapPanel() {
-  const center = [10.7769, 106.7009];
+export default function MapPanel({ timeline = [], zones = [] }) {
+  const geoEvents = timeline.filter(
+    (x) => Number.isFinite(x.latitude) && Number.isFinite(x.longitude)
+  );
+
+  const center = useMemo(() => {
+    const latest = [...geoEvents].sort(
+      (a, b) => new Date(b.event_time) - new Date(a.event_time)
+    )[0];
+    if (latest) return [latest.latitude, latest.longitude];
+    if (zones[0]) return [zones[0].center_latitude, zones[0].center_longitude];
+    return [10.7769, 106.7009];
+  }, [timeline, zones]);
 
   return (
     <div className="real-map">
-      <MapContainer center={center} zoom={12} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+      <MapContainer key={center.join(":")} center={center} zoom={12} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <Circle center={center} radius={2100} pathOptions={{ weight: 2 }} />
-        <Circle center={center} radius={3400} pathOptions={{ weight: 1, dashArray: "6 6" }} />
-        <Marker position={center}>
-          <Popup>Điểm cuối cùng được xác minh — dữ liệu demo</Popup>
-        </Marker>
+
+        {zones.map((zone) => (
+          <Circle
+            key={zone.id || zone.name}
+            center={[zone.center_latitude, zone.center_longitude]}
+            radius={zone.radius_m}
+            pathOptions={{ weight: zone.priority === "high" ? 3 : 2, dashArray: zone.priority === "low" ? "6 6" : undefined }}
+          >
+            <Popup>
+              <strong>{zone.name}</strong><br />
+              Điểm ưu tiên: {zone.score}<br />
+              {zone.rationale || "Chưa có giải thích"}
+            </Popup>
+          </Circle>
+        ))}
+
+        {geoEvents.map((event) => (
+          <Marker key={event.id} position={[event.latitude, event.longitude]}>
+            <Popup>
+              <strong>{event.event_type}</strong><br />
+              {event.description}<br />
+              Độ tin cậy: {event.confidence ?? "—"}
+            </Popup>
+          </Marker>
+        ))}
       </MapContainer>
-      <div className="map-overlay-label">Dữ liệu bản đồ demo • không phải vị trí người dùng</div>
+      <div className="map-overlay-label">
+        {geoEvents.length || zones.length ? "Dữ liệu vụ việc đã tải" : "Bản đồ demo • chưa có dữ liệu định vị vụ việc"}
+      </div>
     </div>
   );
 }
