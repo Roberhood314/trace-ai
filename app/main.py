@@ -414,8 +414,20 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         if not content_type.startswith("image/"):
             raise HTTPException(status_code=502, detail="official source did not return an image")
 
+        image_bytes = response.content
+        if content_type in {"image/jpeg", "image/jpg"}:
+            end = image_bytes.find(b"\\xff\\xd9")
+            if end < 0:
+                raise HTTPException(status_code=502, detail="official JPEG is incomplete")
+            image_bytes = image_bytes[: end + 2]
+        elif content_type == "image/png":
+            marker = b"IEND\\xaeB\\x60\\x82"
+            end = image_bytes.find(marker)
+            if end >= 0:
+                image_bytes = image_bytes[: end + len(marker)]
+
     return Response(
-        content=response.content,
+        content=image_bytes,
         media_type=content_type,
         headers={
             "Cache-Control": "public, max-age=3600",
