@@ -41,3 +41,13 @@ def test_parse_wanted_detail():
     data = parse_wanted_detail(html, "https://truyna.bocongan.gov.vn/x/y")
     assert data["danger_level"] == "cao"
     assert data["image_url"] == "https://truyna.bocongan.gov.vn/images/wanted/person.jpg"
+
+
+def test_parse_wanted_detail_accepts_lazy_official_image():
+    html = """
+    <html><body>
+      <img class="wanted-photo" alt="Ảnh đối tượng truy nã" data-original="/Portals/0/wanted/person-001.jpg" />
+    </body></html>
+    """
+    data = parse_wanted_detail(html, "https://truyna.bocongan.gov.vn/Đối-tượng-truy-nã/ctl/chitiet")
+    assert data["image_url"] == "https://truyna.bocongan.gov.vn/Portals/0/wanted/person-001.jpg"
