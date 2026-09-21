@@ -116,6 +116,8 @@ class WantedRecordOut(BaseModel):
     warrant_reference: str | None = None
     issuing_unit: str | None = None
     detail_url: str | None = None
+    image_url: str | None = None
+    danger_level: str | None = None
     source_url: str
     source_name: str
     imported_at: datetime
