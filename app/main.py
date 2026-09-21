@@ -1,4 +1,8 @@
+import os
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,13 +20,46 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="TRACE-AI",
-    version="0.2.0",
+    version="0.4.0",
     description="MVP hỗ trợ quản lý vụ việc, timeline và vùng tìm kiếm.",
 )
 
+allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[x.strip() for x in allowed_origins if x.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class PiVerifyRequest(BaseModel):
+    access_token: str
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai"}
+    return {"status": "ok", "service": "trace-ai", "version": "0.4.0"}
+
+@app.post("/auth/pi/verify")
+async def verify_pi_user(payload: PiVerifyRequest):
+    if not payload.access_token:
+        raise HTTPException(status_code=400, detail="missing access token")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            "https://api.minepi.com/v2/me",
+            headers={"Authorization": f"Bearer {payload.access_token}"},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="invalid Pi access token")
+
+    data = response.json()
+    return {
+        "uid": data.get("uid"),
+        "username": data.get("username"),
+        "verified": True,
+    }
 
 @app.post("/cases", response_model=CaseOut)
 def create_case(
