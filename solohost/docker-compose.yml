@@ -1,0 +1,25 @@
+services:
+  trace-ai:
+    image: ghcr.io/roberhood314/trace-ai:1.2.0-rc1
+    restart: unless-stopped
+    labels:
+      pi.ui.primary: "true"
+    ports:
+      - "127.0.0.1:18082:8000"
+    environment:
+      DATABASE_URL: "sqlite:////data/trace_ai.db"
+      APP_ENV: "production"
+      APP_SECRET: "${APP_SECRET}"
+      DEV_AUTH_BYPASS: "false"
+      CORS_ORIGINS: "http://127.0.0.1:18082"
+      UPLOAD_DIR: "/data/uploads"
+      MAX_UPLOAD_BYTES: "10485760"
+      SOLOHOST_FIRST_USER_ADMIN: "true"
+      WANTED_AUTO_SYNC_MINUTES: "${WANTED_AUTO_SYNC_MINUTES}"
+      WANTED_AUTO_SYNC_PAGES: "${WANTED_AUTO_SYNC_PAGES}"
+      WANTED_DETAIL_LIMIT: "${WANTED_DETAIL_LIMIT}"
+    volumes:
+      - trace_ai_data:/data
+
+volumes:
+  trace_ai_data:
