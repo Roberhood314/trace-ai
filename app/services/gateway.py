@@ -114,3 +114,34 @@ async def weather_snapshot(latitude: float, longitude: float) -> dict:
         "visibilityKm": visibility,
         "condition": f"WMO {current.get('weather_code')}" if current.get("weather_code") is not None else None,
     }
+
+
+async def response_units_snapshot() -> list[dict]:
+    provider_url = os.getenv("RESPONSE_UNIT_GATEWAY_URL", "").strip()
+    if not provider_url:
+        return []
+    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+        response = await client.get(provider_url)
+        response.raise_for_status()
+        payload = response.json()
+    rows = payload if isinstance(payload, list) else payload.get("units", [])
+    out: list[dict] = []
+    for item in rows[:200]:
+        try:
+            lat = float(item.get("latitude"))
+            lon = float(item.get("longitude"))
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        out.append({
+            "id": str(item.get("id") or f"unit-{len(out)+1}"),
+            "label": str(item.get("label") or item.get("name") or "Đơn vị"),
+            "latitude": lat,
+            "longitude": lon,
+            "available": bool(item.get("available", True)),
+            "mode": item.get("mode") if item.get("mode") in {"walk", "vehicle", "motorbike"} else "vehicle",
+            "source": "authorized_gateway",
+            "updatedAt": item.get("updatedAt") or item.get("updated_at") or datetime.now(timezone.utc).isoformat(),
+        })
+    return out
