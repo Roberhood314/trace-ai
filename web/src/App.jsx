@@ -13,6 +13,8 @@ import {
   UserRoundSearch
 } from "lucide-react";
 import { authenticatePi, initPi } from "./pi";
+import MapPanel from "./MapPanel";
+import CreateCaseModal from "./CreateCaseModal";
 import { demoCases, demoTimeline, demoZones } from "./demoData";
 
 function Badge({ children, tone = "neutral" }) {
@@ -36,6 +38,8 @@ export default function App() {
   const [activeCase, setActiveCase] = useState(demoCases[0]);
   const [tab, setTab] = useState("overview");
   const [piReady, setPiReady] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [liveCases, setLiveCases] = useState([]);
 
   useEffect(() => {
     setPiReady(initPi());
@@ -103,11 +107,11 @@ export default function App() {
               <div className="eyebrow">ACTIVE CASES</div>
               <h3>Hồ sơ đang xử lý</h3>
             </div>
-            <button className="primary-button">+ Tạo vụ việc</button>
+            <button className="primary-button" onClick={() => setShowCreate(true)}>+ Tạo vụ việc</button>
           </div>
 
           <div className="case-list">
-            {demoCases.map((item) => (
+            {[...liveCases, ...demoCases].map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveCase(item)}
@@ -156,13 +160,7 @@ export default function App() {
 
           {tab === "overview" && (
             <div className="overview-grid">
-              <div className="map-placeholder">
-                <div className="map-grid"></div>
-                <div className="map-zone zone-a">A</div>
-                <div className="map-zone zone-b">B</div>
-                <div className="map-pin"></div>
-                <div className="map-label">Bản đồ tác chiến / GIS</div>
-              </div>
+              <MapPanel />
 
               <div className="summary-card">
                 <h4>Thông tin nhanh</h4>
@@ -227,6 +225,25 @@ export default function App() {
           )}
         </section>
       </main>
+
+      {showCreate && (
+        <CreateCaseModal
+          onClose={() => setShowCreate(false)}
+          onCreated={(created) => {
+            const uiCase = {
+              id: created.case_code,
+              title: created.title,
+              status: created.status || "open",
+              lastSeen: "Chưa có dữ liệu",
+              radius: "Chưa tính",
+              confidence: 0,
+              priority: "Mới"
+            };
+            setLiveCases((prev) => [uiCase, ...prev]);
+            setActiveCase(uiCase);
+          }}
+        />
+      )}
 
       <nav className="bottom-nav">
         <button className="active"><Radar size={20} /><span>Trung tâm</span></button>
