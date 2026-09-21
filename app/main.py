@@ -47,6 +47,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"}
 
+IMAGE_FETCH_SEMAPHORE = asyncio.Semaphore(6)
+
 app = FastAPI(
     title="TRACE-AI",
     version="1.4.6-rc1",
@@ -382,25 +384,28 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="wanted record not found")
 
     image_url = row.image_url
+    detail_url = row.detail_url
+    # Release the DB connection before any slow external network I/O.
+    # This prevents bulk image loading from exhausting the SQLAlchemy pool
+    # and blocking core endpoints such as /public/wanted and Radar data.
+    db.close()
+
     headers = {
         "User-Agent": "TRACE-AI/1.4 (+official public-data image proxy)",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
     }
 
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-        if not image_url and row.detail_url:
-            detail_host = (urlparse(row.detail_url).hostname or "").lower()
+        if not image_url and detail_url:
+            detail_host = (urlparse(detail_url).hostname or "").lower()
             if detail_host != "truyna.bocongan.gov.vn":
                 raise HTTPException(status_code=400, detail="unsupported official detail host")
-            detail = await client.get(row.detail_url)
+            detail = await client.get(detail_url)
             detail.raise_for_status()
             parsed = parse_wanted_detail(detail.text, str(detail.url))
             image_url = parsed.get("image_url")
-            if image_url:
-                row.image_url = image_url
-                if parsed.get("danger_level"):
-                    row.danger_level = parsed["danger_level"]
-                db.commit()
+            # Do not hold/reopen a DB transaction while proxying image bytes.
+            # Source synchronization persists metadata separately.
 
         if not image_url:
             raise HTTPException(status_code=404, detail="official image not available")
@@ -415,7 +420,8 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
                 return source.read(), source.headers.get("content-type", "image/jpeg")
 
         try:
-            image_bytes, raw_content_type = await asyncio.to_thread(fetch_image_bytes)
+            async with IMAGE_FETCH_SEMAPHORE:
+                image_bytes, raw_content_type = await asyncio.to_thread(fetch_image_bytes)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"official image fetch failed: {exc.__class__.__name__}")
 
