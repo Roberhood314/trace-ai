@@ -55,3 +55,15 @@ class SearchZoneOut(SearchZoneCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
     case_id: int
+
+class EvidenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    case_id: int
+    person_id: int | None = None
+    original_name: str
+    media_type: str
+    size_bytes: int
+    note: str | None = None
+    created_at: datetime
+    url: str | None = None
