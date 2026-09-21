@@ -1,4 +1,4 @@
-# Release Checklist — 1.0.0-rc1
+# Release Checklist — 1.1.0-rc1
 
 - [x] Python source compiles.
 - [x] Core backend API tests added.
@@ -12,6 +12,10 @@
 - [x] Privacy policy template.
 - [x] Domain validation placeholder.
 - [x] CI workflows for backend and web build.
+- [x] Parser nguồn truy nã chính thức có unit test.
+- [x] Radar truy nã frontend build thành công.
+- [x] Đồng bộ nguồn BCA yêu cầu role commander/admin.
+- [x] Link nguồn chính thức được lưu và hiển thị.
 - [ ] Replace production secrets/domains.
 - [ ] Replace Privacy Policy operator/contact details.
 - [ ] Add actual Pi validation key.
