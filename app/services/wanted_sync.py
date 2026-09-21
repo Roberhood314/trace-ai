@@ -158,37 +158,105 @@ def parse_wanted_page(html: str, page_url: str, status: str = "active") -> tuple
     return records, unique_pages
 
 
+def _dnn_page_meta(html: str, page_url: str) -> tuple[int, str | None, dict[str, str], str]:
+    soup = BeautifulSoup(html, "lxml")
+    text = soup.get_text(" ", strip=True)
+    match = re.search(r"Page\s+(\d+)\s+of\s+(\d+)", text, re.I)
+    total_pages = int(match.group(2)) if match else 1
+
+    pager_target = None
+    for a in soup.find_all("a", href=True):
+        href = a.get("href") or ""
+        m = re.search(r"__doPostBack\('([^']+)','(\d+)'\)", href)
+        if m:
+            pager_target = m.group(1)
+            break
+
+    form = soup.find("form", id="Form")
+    hidden: dict[str, str] = {}
+    action_url = page_url
+    if form:
+        for inp in form.find_all("input", {"type": "hidden"}):
+            name = inp.get("name")
+            if name:
+                hidden[name] = inp.get("value", "")
+        action = form.get("action")
+        if action:
+            action_url = urljoin(page_url, action)
+
+    return total_pages, pager_target, hidden, action_url
+
+
 async def fetch_official_list(
     start_url: str,
     status: str,
     max_pages: int = 250,
 ) -> tuple[list[dict], int]:
+    """Fetch a DNN/ASP.NET paged public list while preserving postback state.
+
+    The official portal uses multipart/form-data postbacks with VIEWSTATE rather
+    than ordinary page links. Each response contains the next state, so pages are
+    fetched sequentially using a single cookie-preserving client.
+    """
     max_pages = max(1, min(int(max_pages), 500))
-    queue = [start_url]
-    visited: set[str] = set()
     all_records: dict[str, dict] = {}
     headers = {
-        "User-Agent": "TRACE-AI/1.4 (+official public-data sync; source attribution retained)",
+        "User-Agent": "TRACE-AI/1.5 (+official public-data sync; source attribution retained)",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
     }
 
-    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True, headers=headers) as client:
-        while queue and len(visited) < max_pages:
-            url = queue.pop(0)
-            if url in visited:
-                continue
-            response = await client.get(url)
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=headers) as client:
+        response = await client.get(start_url)
+        response.raise_for_status()
+
+        current_url = str(response.url)
+        records, _ = parse_wanted_page(response.text, current_url, status=status)
+        for record in records:
+            all_records[record["source_key"]] = record
+
+        total_pages, pager_target, hidden, action_url = _dnn_page_meta(response.text, current_url)
+        pages_to_fetch = min(total_pages, max_pages)
+        visited_pages = 1
+
+        if pages_to_fetch <= 1 or not pager_target:
+            return list(all_records.values()), visited_pages
+
+        for page_number in range(2, pages_to_fetch + 1):
+            form_fields = dict(hidden)
+            form_fields["__EVENTTARGET"] = pager_target
+            form_fields["__EVENTARGUMENT"] = str(page_number)
+            multipart = {name: (None, value) for name, value in form_fields.items()}
+
+            response = await client.post(
+                action_url,
+                files=multipart,
+                headers={"Referer": current_url},
+            )
             response.raise_for_status()
-            canonical = str(response.url)
-            visited.add(canonical)
-            records, discovered = parse_wanted_page(response.text, canonical, status=status)
+            current_url = str(response.url)
+
+            page_match = re.search(r"Page\s+(\d+)\s+of\s+(\d+)", response.text, re.I)
+            if page_match and int(page_match.group(1)) != page_number:
+                raise RuntimeError(
+                    f"official pagination state mismatch: expected={page_number};got={page_match.group(1)}"
+                )
+
+            records, _ = parse_wanted_page(response.text, current_url, status=status)
             for record in records:
                 all_records[record["source_key"]] = record
-            for next_url in discovered:
-                if next_url not in visited and next_url not in queue:
-                    queue.append(next_url)
+            visited_pages += 1
 
-    return list(all_records.values()), len(visited)
+            next_total, next_target, next_hidden, next_action = _dnn_page_meta(response.text, current_url)
+            if next_target:
+                pager_target = next_target
+            if next_hidden:
+                hidden = next_hidden
+            if next_action:
+                action_url = next_action
+            if next_total and page_number >= min(next_total, pages_to_fetch):
+                break
+
+    return list(all_records.values()), visited_pages
 
 
 async def fetch_official_wanted(
