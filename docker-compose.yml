@@ -3,10 +3,20 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql+psycopg://trace_ai:change_me@db:5432/trace_ai
+      APP_ENV: production
+      APP_SECRET: change-me-before-production
+      CORS_ORIGINS: http://localhost:5173
+      DEV_AUTH_BYPASS: "false"
+      UPLOAD_DIR: /data/uploads
+      MAX_UPLOAD_BYTES: "10485760"
+      BOOTSTRAP_ADMIN_PI_UIDS: ""
+      BOOTSTRAP_ADMIN_PI_USERNAMES: ""
     ports:
       - "8000:8000"
     depends_on:
       - db
+    volumes:
+      - trace_ai_uploads:/data/uploads
 
   db:
     image: postgis/postgis:16-3.4
@@ -21,3 +31,4 @@ services:
 
 volumes:
   trace_ai_db:
+  trace_ai_uploads:
