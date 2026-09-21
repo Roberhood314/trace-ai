@@ -1,21 +1,31 @@
 from datetime import datetime
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pi_uid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), default="viewer")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
 class Case(Base):
     __tablename__ = "cases"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     case_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="open")
     legal_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 class MissingPerson(Base):
     __tablename__ = "missing_persons"
-
+    __table_args__ = (UniqueConstraint("case_id", name="uq_missing_person_case"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"), index=True)
     full_name: Mapped[str] = mapped_column(String(255))
@@ -29,7 +39,6 @@ class MissingPerson(Base):
 
 class TimelineEvent(Base):
     __tablename__ = "timeline_events"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"), index=True)
     event_time: Mapped[datetime] = mapped_column(DateTime, index=True)
@@ -40,10 +49,10 @@ class TimelineEvent(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 class SearchZone(Base):
     __tablename__ = "search_zones"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
@@ -53,10 +62,10 @@ class SearchZone(Base):
     radius_m: Mapped[float] = mapped_column(Float)
     score: Mapped[float] = mapped_column(Float, default=0)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     actor: Mapped[str] = mapped_column(String(128))
     action: Mapped[str] = mapped_column(String(128))
@@ -67,7 +76,6 @@ class AuditEvent(Base):
 
 class Evidence(Base):
     __tablename__ = "evidence"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"), index=True)
     person_id: Mapped[int | None] = mapped_column(ForeignKey("missing_persons.id"), nullable=True, index=True)
@@ -76,4 +84,5 @@ class Evidence(Base):
     media_type: Mapped[str] = mapped_column(String(128))
     size_bytes: Mapped[int] = mapped_column()
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
