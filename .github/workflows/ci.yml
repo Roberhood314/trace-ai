@@ -7,10 +7,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./test_trace_ai.db
+      APP_ENV: development
+      DEV_AUTH_BYPASS: "true"
+      APP_SECRET: test-secret-only
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - run: python -m compileall -q app
       - run: pytest -q
