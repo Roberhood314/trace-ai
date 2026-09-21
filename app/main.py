@@ -26,6 +26,7 @@ from .schemas import (
 )
 from .security import CurrentUser, Role, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, utcnow_naive
+from .services.gateway import public_gateway_signals, public_gateway_status, weather_snapshot
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -334,6 +335,23 @@ def ai_summary(case_id: int, db: Session = Depends(get_db), user: CurrentUser = 
     )
 
 
+
+@app.get("/public/gateway/status")
+def gateway_status_public(db: Session = Depends(get_db)):
+    return public_gateway_status(db)
+
+@app.get("/public/gateway/signals")
+def gateway_signals_public(q: str | None = None, limit: int = 50, db: Session = Depends(get_db)):
+    return public_gateway_signals(db, q=q, limit=limit)
+
+@app.get("/public/gateway/weather")
+async def gateway_weather_public(lat: float, lon: float):
+    try:
+        return await weather_snapshot(lat, lon)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"weather gateway unavailable: {exc.__class__.__name__}")
 
 @app.get("/public/wanted", response_model=list[WantedRecordOut])
 def public_wanted_records(q: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
