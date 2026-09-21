@@ -1,3 +1,4 @@
+import base64
 import asyncio
 import os
 import uuid
@@ -48,7 +49,7 @@ ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "vi
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.4.5-rc2",
+    version="1.4.6-rc1",
     description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
 )
 
@@ -133,7 +134,7 @@ async def start_wanted_auto_sync():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.4.5-rc2"}
+    return {"status": "ok", "service": "trace-ai", "version": "1.4.6-rc1"}
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
@@ -443,6 +444,17 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
             "X-TRACE-Image-Normalized": "true",
         },
     )
+
+@app.get("/public/wanted/{wanted_id}/image-data")
+async def public_wanted_image_data(wanted_id: int, db: Session = Depends(get_db)):
+    image_response = await public_wanted_image(wanted_id, db)
+    content_type = image_response.media_type or "image/jpeg"
+    return {
+        "id": wanted_id,
+        "content_type": content_type,
+        "data_url": f"data:{content_type};base64,{base64.b64encode(image_response.body).decode('ascii')}",
+        "source": "truyna.bocongan.gov.vn",
+    }
 
 @app.get("/public/wanted", response_model=list[WantedRecordOut])
 def public_wanted_records(q: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
