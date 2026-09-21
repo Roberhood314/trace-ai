@@ -30,7 +30,7 @@ from .schemas import (
     WantedRecordOut, WantedSyncOut,
 )
 from .security import CurrentUser, Role, issue_token, require_role
-from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, parse_wanted_detail, record_checksum, utcnow_naive
+from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 
 def validate_runtime_config():
@@ -71,6 +71,18 @@ ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "vi
 IMAGE_FETCH_SEMAPHORE = asyncio.Semaphore(6)
 IMAGE_CACHE_MAX = max(16, min(int(os.getenv("WANTED_IMAGE_CACHE_ITEMS", "128") or 128), 512))
 IMAGE_CACHE: OrderedDict[int, tuple[str, bytes]] = OrderedDict()
+WANTED_SYNC_LOCK = asyncio.Lock()
+WANTED_SYNC_STATE = {
+    "running": False,
+    "mode": None,
+    "source_status": None,
+    "page": 0,
+    "total_pages": 0,
+    "records_seen": 0,
+    "started_at": None,
+    "completed_at": None,
+    "last_error": None,
+}
 
 app = FastAPI(
     title="TRACE-AI",
@@ -207,22 +219,79 @@ def _apply_wanted_records(db: Session, records: list[dict], actor: str, action: 
 async def _run_wanted_sync(full: bool, actor: str = "system"):
     if full:
         pages = max(50, min(int(os.getenv("WANTED_FULL_SYNC_PAGES", "250") or 250), 500))
-        detail_limit = max(0, min(int(os.getenv("WANTED_FULL_DETAIL_LIMIT", "0") or 0), 200))
-        action = "wanted_full_sync"
+        action = "wanted_full_sync_page"
+        mode = "full"
     else:
         pages = max(1, min(int(os.getenv("WANTED_DELTA_PAGES", "5") or 5), 25))
-        detail_limit = max(0, min(int(os.getenv("WANTED_DELTA_DETAIL_LIMIT", "10") or 10), 50))
-        action = "wanted_delta_sync"
+        action = "wanted_delta_sync_page"
+        mode = "delta"
 
-    records, fetched_pages = await fetch_official_wanted(
-        max_pages=pages,
-        detail_limit=detail_limit,
-        include_suspended=True,
-        suspended_pages=pages,
-    )
-    with SessionLocal() as db:
-        stats = _apply_wanted_records(db, records, actor, action, fetched_pages)
-    return records, fetched_pages, stats
+    totals = {
+        "inserted": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "active_records": 0,
+        "suspended_records": 0,
+        "parsed_records": 0,
+        "fetched_pages": 0,
+    }
+
+    async with WANTED_SYNC_LOCK:
+        WANTED_SYNC_STATE.update({
+            "running": True,
+            "mode": mode,
+            "source_status": None,
+            "page": 0,
+            "total_pages": 0,
+            "records_seen": 0,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": None,
+            "last_error": None,
+        })
+        try:
+            sources = [
+                (OFFICIAL_WANTED_URL, "active"),
+                (OFFICIAL_SUSPENDED_URL, "dinh_na"),
+            ]
+            for source_url, source_status in sources:
+                WANTED_SYNC_STATE["source_status"] = source_status
+                async for page_number, total_pages, records in iter_official_list_pages(
+                    source_url, source_status, max_pages=pages
+                ):
+                    WANTED_SYNC_STATE.update({
+                        "page": page_number,
+                        "total_pages": total_pages,
+                    })
+                    with SessionLocal() as db:
+                        stats = _apply_wanted_records(
+                            db,
+                            records,
+                            actor,
+                            action,
+                            page_number,
+                        )
+                    totals["inserted"] += stats["inserted"]
+                    totals["updated"] += stats["updated"]
+                    totals["unchanged"] += stats["unchanged"]
+                    totals["active_records"] += stats["active_records"]
+                    totals["suspended_records"] += stats["suspended_records"]
+                    totals["parsed_records"] += len(records)
+                    totals["fetched_pages"] += 1
+                    WANTED_SYNC_STATE["records_seen"] = totals["parsed_records"]
+
+            WANTED_SYNC_STATE.update({
+                "running": False,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "last_error": None,
+            })
+            return totals
+        except Exception as exc:
+            WANTED_SYNC_STATE.update({
+                "running": False,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "last_error": f"{exc.__class__.__name__}: {str(exc)[:240]}",
+            })
+            raise
 
 
 async def _system_sync_wanted():
@@ -644,6 +713,7 @@ def _wanted_source_status(db: Session):
         "full_sync_hours": max(6, int(os.getenv("WANTED_FULL_SYNC_HOURS", "24") or 24)),
         "image_cache_items": len(IMAGE_CACHE),
         "image_cache_limit": IMAGE_CACHE_MAX,
+        "sync_progress": dict(WANTED_SYNC_STATE),
     }
 
 
@@ -720,34 +790,19 @@ async def sync_wanted_records(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_role(Role.COMMANDER)),
 ):
+    if WANTED_SYNC_LOCK.locked():
+        raise HTTPException(status_code=409, detail="wanted sync already running")
     try:
-        if full:
-            pages = max(50, min(int(os.getenv("WANTED_FULL_SYNC_PAGES", "250") or 250), 500))
-            detail_limit = max(0, min(int(os.getenv("WANTED_FULL_DETAIL_LIMIT", "0") or 0), 200))
-        else:
-            pages = max(1, min(int(os.getenv("WANTED_DELTA_PAGES", "5") or 5), 25))
-            detail_limit = max(0, min(int(os.getenv("WANTED_DELTA_DETAIL_LIMIT", "10") or 10), 50))
-
-        records, fetched_pages = await fetch_official_wanted(
-            max_pages=pages,
-            detail_limit=detail_limit,
-            include_suspended=True,
-            suspended_pages=pages,
-        )
+        stats = await _run_wanted_sync(full=full, actor=user.uid)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"official wanted source unavailable: {exc.__class__.__name__}")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
-    stats = _apply_wanted_records(
-        db,
-        records,
-        user.uid,
-        "wanted_full_sync" if full else "wanted_delta_sync",
-        fetched_pages,
-    )
     return WantedSyncOut(
         source=OFFICIAL_WANTED_URL,
-        fetched_pages=fetched_pages,
-        parsed_records=len(records),
+        fetched_pages=stats["fetched_pages"],
+        parsed_records=stats["parsed_records"],
         inserted=stats["inserted"],
         updated=stats["updated"],
         unchanged=stats["unchanged"],
