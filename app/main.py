@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from .database import Base, engine, get_db
+from .database import Base, SessionLocal, engine, get_db
 from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User, WantedRecord
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
@@ -74,6 +75,45 @@ def ensure_case(db: Session, case_id: int) -> Case:
     if not case:
         raise HTTPException(status_code=404, detail="case not found")
     return case
+
+async def _system_sync_wanted():
+    interval = int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "0") or 0)
+    if interval < 30:
+        return
+    pages = max(1, min(int(os.getenv("WANTED_AUTO_SYNC_PAGES", "3") or 3), 10))
+    detail_limit = max(0, min(int(os.getenv("WANTED_DETAIL_LIMIT", "40") or 40), 100))
+    while True:
+        try:
+            records, fetched_pages = await fetch_official_wanted(max_pages=pages, detail_limit=detail_limit)
+            now = utcnow_naive()
+            with SessionLocal() as db:
+                inserted = 0
+                updated = 0
+                for item in records:
+                    row = db.scalar(select(WantedRecord).where(WantedRecord.source_key == item["source_key"]))
+                    if row is None:
+                        db.add(WantedRecord(**item, imported_at=now, last_seen_at=now))
+                        inserted += 1
+                    else:
+                        for field, value in item.items():
+                            setattr(row, field, value)
+                        row.last_seen_at = now
+                        updated += 1
+                db.add(AuditEvent(
+                    actor="system",
+                    action="wanted_auto_sync",
+                    resource_type="wanted_source",
+                    detail=f"pages={fetched_pages};records={len(records)};inserted={inserted};updated={updated}",
+                ))
+                db.commit()
+        except Exception:
+            pass
+        await asyncio.sleep(interval * 60)
+
+@app.on_event("startup")
+async def start_wanted_auto_sync():
+    if int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "0") or 0) >= 30:
+        asyncio.create_task(_system_sync_wanted())
 
 @app.get("/health")
 def health():
@@ -360,7 +400,7 @@ async def sync_wanted_records(
     user: CurrentUser = Depends(require_role(Role.COMMANDER)),
 ):
     try:
-        records, fetched_pages = await fetch_official_wanted(max_pages=pages)
+        records, fetched_pages = await fetch_official_wanted(max_pages=pages, detail_limit=int(os.getenv("WANTED_DETAIL_LIMIT", "40") or 40))
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"official wanted source unavailable: {exc.__class__.__name__}")
 
