@@ -1,7 +1,10 @@
+import { verifyPiAccessToken } from "./api";
+
 export function initPi() {
   if (!window.Pi) return false;
   try {
-    window.Pi.init({ version: "2.0", sandbox: true });
+    const sandbox = String(import.meta.env.VITE_PI_SANDBOX ?? "true") === "true";
+    window.Pi.init({ version: "2.0", sandbox });
     return true;
   } catch {
     return false;
@@ -13,16 +16,18 @@ export async function authenticatePi() {
     return {
       uid: "demo-user",
       username: "Demo Operator",
+      verified: false,
       demo: true
     };
   }
 
-  const scopes = ["username"];
-  const auth = await window.Pi.authenticate(scopes, () => {});
+  const auth = await window.Pi.authenticate(["username"], () => {});
+  const verified = await verifyPiAccessToken(auth.accessToken);
+
   return {
-    uid: auth.user.uid,
-    username: auth.user.username,
-    accessToken: auth.accessToken,
+    uid: verified.uid,
+    username: verified.username,
+    verified: true,
     demo: false
   };
 }
