@@ -1,6 +1,6 @@
 services:
   trace-ai:
-    image: ghcr.io/roberhood314/trace-ai:1.2.0-rc1
+    image: ghcr.io/roberhood314/trace-ai:1.4.5-rc2
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"
@@ -18,6 +18,8 @@ services:
       WANTED_AUTO_SYNC_MINUTES: "${WANTED_AUTO_SYNC_MINUTES}"
       WANTED_AUTO_SYNC_PAGES: "${WANTED_AUTO_SYNC_PAGES}"
       WANTED_DETAIL_LIMIT: "${WANTED_DETAIL_LIMIT}"
+      WEATHER_GATEWAY_URL: "${WEATHER_GATEWAY_URL:-}"
+      RESPONSE_UNIT_GATEWAY_URL: "${RESPONSE_UNIT_GATEWAY_URL:-}"
     volumes:
       - trace_ai_data:/data
 
