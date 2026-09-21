@@ -64,3 +64,16 @@ class AuditEvent(Base):
     resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class Evidence(Base):
+    __tablename__ = "evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("cases.id"), index=True)
+    person_id: Mapped[int | None] = mapped_column(ForeignKey("missing_persons.id"), nullable=True, index=True)
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_name: Mapped[str] = mapped_column(String(255), unique=True)
+    media_type: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column()
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
