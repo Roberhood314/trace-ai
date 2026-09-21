@@ -439,7 +439,8 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         media_type=content_type,
         headers={
             "Cache-Control": "public, max-age=3600",
-            "X-TRACE-Image-Source": "truyna.bocongan.gov.vn",\n            "X-TRACE-Image-Normalized": "true",
+            "X-TRACE-Image-Source": "truyna.bocongan.gov.vn",
+            "X-TRACE-Image-Normalized": "true",
         },
     )
 
