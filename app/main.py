@@ -23,6 +23,15 @@ from .schemas import (
 )
 from .security import CurrentUser, Role, issue_token, require_role
 
+def validate_runtime_config():
+    if os.getenv("APP_ENV", "development") == "production":
+        secret = os.getenv("APP_SECRET", "")
+        if not secret or secret.startswith("change-") or secret == "dev-only-change-me":
+            raise RuntimeError("APP_SECRET must be replaced before production")
+        if os.getenv("DEV_AUTH_BYPASS", "false").lower() == "true":
+            raise RuntimeError("DEV_AUTH_BYPASS must be false in production")
+
+validate_runtime_config()
 Base.metadata.create_all(bind=engine)
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./data/uploads"))
