@@ -103,7 +103,7 @@ async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)
         db.add(user)
     else:
         user.username = username
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(user)
     return AuthOut(token=issue_token(user), username=user.username, role=user.role, verified=True)
