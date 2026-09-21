@@ -3,7 +3,7 @@
 ## Upload target
 Use the contents of `web/` as the Pi-facing frontend source. The full repository also contains the FastAPI backend.
 
-## Release 1.0.0-rc1
+## Release 1.1.0-rc1
 - Pi SDK login
 - Server-side Pi identity verification
 - Signed TRACE-AI session
@@ -19,6 +19,8 @@ Use the contents of `web/` as the Pi-facing frontend source. The full repository
 - Admin role management
 - Privacy Policy template
 - Pi domain-validation placeholder
+- Radar truy nã trực quan
+- Tra cứu và đồng bộ dữ liệu công khai từ Cổng thông tin truy nã Bộ Công an
 
 ## Environment
 Local:
