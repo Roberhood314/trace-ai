@@ -8,6 +8,7 @@ import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -140,8 +141,9 @@ async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)
     bootstrap_admins = {x.strip() for x in os.getenv("BOOTSTRAP_ADMIN_PI_UIDS", "").split(",") if x.strip()}
     bootstrap_names = {x.strip().lower() for x in os.getenv("BOOTSTRAP_ADMIN_PI_USERNAMES", "").split(",") if x.strip()}
     is_bootstrap_admin = uid in bootstrap_admins or (username or "").lower() in bootstrap_names
+    first_user_admin = os.getenv("SOLOHOST_FIRST_USER_ADMIN", "false").lower() == "true" and db.scalar(select(User.id).limit(1)) is None
     if not user:
-        user = User(pi_uid=uid, username=username, role="admin" if is_bootstrap_admin else "viewer")
+        user = User(pi_uid=uid, username=username, role="admin" if (is_bootstrap_admin or first_user_admin) else "viewer")
         db.add(user)
     else:
         user.username = username
@@ -432,3 +434,9 @@ async def sync_wanted_records(
         updated=updated,
         synced_at=datetime.now(timezone.utc),
     )
+
+
+# SoloHost/production web UI: API routes above keep precedence; static UI is mounted last.
+WEB_DIST_DIR = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist"))
+if WEB_DIST_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(WEB_DIST_DIR), html=True), name="web")
