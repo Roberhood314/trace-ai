@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import re
 from datetime import datetime, timezone
@@ -15,6 +16,32 @@ def _clean(value: str | None) -> str:
 def _source_key(detail_url: str | None, cells: list[str]) -> str:
     raw = detail_url or "|".join(cells)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def parse_wanted_detail(html: str, page_url: str) -> dict:
+    soup = BeautifulSoup(html, "lxml")
+    image_url = None
+    for img in soup.find_all("img", src=True):
+        alt = _clean(img.get("alt"))
+        src = urljoin(page_url, img.get("src"))
+        if "Ảnh đối tượng truy nã" in alt or "anh doi tuong truy na" in alt.lower():
+            image_url = src
+            break
+
+    danger_level = None
+    for tr in soup.find_all("tr"):
+        cells = [_clean(td.get_text(" ", strip=True)) for td in tr.find_all(["th", "td"])]
+        for i, value in enumerate(cells[:-1]):
+            if value == "Loại truy nã":
+                kind = cells[i + 1].lower()
+                if "đặc biệt" in kind or "nguy hiểm" in kind:
+                    danger_level = "cao"
+                elif kind:
+                    danger_level = "khong_ro"
+                break
+        if danger_level:
+            break
+
+    return {"image_url": image_url, "danger_level": danger_level}
 
 def parse_wanted_page(html: str, page_url: str) -> tuple[list[dict], list[str]]:
     soup = BeautifulSoup(html, "lxml")
@@ -71,7 +98,7 @@ def parse_wanted_page(html: str, page_url: str) -> tuple[list[dict], list[str]]:
 
     return records, unique_pages
 
-async def fetch_official_wanted(max_pages: int = 3) -> tuple[list[dict], int]:
+async def fetch_official_wanted(max_pages: int = 3, detail_limit: int = 40) -> tuple[list[dict], int]:
     max_pages = max(1, min(int(max_pages), 10))
     queue = [OFFICIAL_WANTED_URL]
     visited: set[str] = set()
@@ -96,6 +123,25 @@ async def fetch_official_wanted(max_pages: int = 3) -> tuple[list[dict], int]:
             for next_url in discovered:
                 if next_url not in visited and next_url not in queue:
                     queue.append(next_url)
+
+        records = list(all_records.values())
+        sem = asyncio.Semaphore(5)
+
+        async def enrich(record: dict):
+            detail_url = record.get("detail_url")
+            if not detail_url:
+                return
+            async with sem:
+                try:
+                    response = await client.get(detail_url)
+                    response.raise_for_status()
+                    record.update(parse_wanted_detail(response.text, str(response.url)))
+                except httpx.HTTPError:
+                    record.setdefault("image_url", None)
+                    record.setdefault("danger_level", None)
+
+        detail_candidates = [r for r in records if r.get("detail_url")][:max(0, min(int(detail_limit), 100))]
+        await asyncio.gather(*(enrich(r) for r in detail_candidates))
 
     return list(all_records.values()), len(visited)
 
