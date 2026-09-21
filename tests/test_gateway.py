@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.models import WantedRecord
-from app.services.gateway import public_gateway_signals, public_gateway_status
+from app.services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot
 
 
 def test_public_gateway_reads_official_wanted_records():
@@ -40,3 +40,9 @@ def test_public_gateway_reads_official_wanted_records():
         assert rows[0]["sourceKind"] == "public_official"
         assert rows[0]["confidence"] == 1.0
         assert rows[0]["referenceUrl"].startswith("https://truyna.bocongan.gov.vn/")
+
+
+def test_response_units_empty_without_authorized_gateway(monkeypatch):
+    monkeypatch.delenv("RESPONSE_UNIT_GATEWAY_URL", raising=False)
+    import asyncio
+    assert asyncio.run(response_units_snapshot()) == []
