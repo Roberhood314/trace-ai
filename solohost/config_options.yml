@@ -32,3 +32,15 @@ fields:
     type: number
     default: "40"
     help: Giới hạn số hồ sơ chi tiết được đọc thêm trong mỗi lần đồng bộ để giảm tải cho nguồn chính thức.
+
+  - name: WEATHER_GATEWAY_URL
+    label: Weather gateway URL (tùy chọn)
+    type: text
+    required: false
+    help: Endpoint thời tiết được cấp quyền. Để trống để dùng nguồn thời tiết mặc định.
+
+  - name: RESPONSE_UNIT_GATEWAY_URL
+    label: Response-unit gateway URL (tùy chọn)
+    type: text
+    required: false
+    help: Endpoint đơn vị phản ứng được cấp quyền. Để trống nếu chưa cấu hình.
