@@ -17,8 +17,11 @@ import MapPanel from "./MapPanel";
 import CreateCaseModal from "./CreateCaseModal";
 import PersonPanel from "./PersonPanel";
 import EvidencePanel from "./EvidencePanel";
+import TimelinePanel from "./TimelinePanel";
+import ZonesPanel from "./ZonesPanel";
+import AIAnalysisPanel from "./AIAnalysisPanel";
 import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones } from "./api";
-import { demoCases, demoTimeline, demoZones } from "./demoData";
+import { demoCases, demoZones } from "./demoData";
 
 function Badge({ children, tone = "neutral" }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
@@ -81,10 +84,7 @@ export default function App() {
     }).catch(() => {});
   }, [activeCase?.dbId]);
 
-  const zoneScore = useMemo(
-    () => Math.max(...demoZones.map((z) => z.score)),
-    []
-  );
+  const zoneScore = useMemo(() => zones.length ? Math.max(...zones.map(z=>z.score)) : Math.max(...demoZones.map(z=>z.score)), [zones]);
 
   async function signIn() {
     try {
@@ -108,7 +108,7 @@ export default function App() {
 
         <button className="profile-button" onClick={signIn}>
           <LogIn size={17} />
-          <span>{user ? user.username : piReady ? "Đăng nhập Pi" : "Demo"}</span>
+          <span>{user ? `${user.username || "Pi User"} · ${user.role || ""}` : piReady ? "Đăng nhập Pi" : "Demo"}</span>
         </button>
       </header>
 
@@ -131,9 +131,9 @@ export default function App() {
         </section>
 
         <section className="stats-grid">
-          <StatCard icon={UserRoundSearch} label="Vụ việc đang mở" value="2" />
-          <StatCard icon={Camera} label="Nguồn đã xác minh" value="14" />
-          <StatCard icon={MapPinned} label="Vùng ưu tiên" value="3" />
+          <StatCard icon={UserRoundSearch} label="Vụ việc đang mở" value={liveCases.length || 2} />
+          <StatCard icon={Camera} label="Chứng cứ" value={evidence.length} />
+          <StatCard icon={MapPinned} label="Vùng ưu tiên" value={zones.length} />
           <StatCard icon={Activity} label="Điểm tin cậy cao nhất" value={`${zoneScore}%`} />
         </section>
 
@@ -218,36 +218,11 @@ export default function App() {
           )}
 
           {tab === "timeline" && (
-            <div className="timeline">
-              {(timeline.length ? timeline.map((x) => ({time: new Date(x.event_time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}), label: x.event_type, detail: x.description})) : demoTimeline).map((item) => (
-                <div className="timeline-item" key={item.time + item.label}>
-                  <div className="time">{item.time}</div>
-                  <div className="timeline-dot"></div>
-                  <div>
-                    <strong>{item.label}</strong>
-                    <p>{item.detail}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <TimelinePanel caseId={activeCase.dbId} items={timeline} onCreated={(item)=>setTimeline(prev=>[...prev,item].sort((a,b)=>new Date(a.event_time)-new Date(b.event_time)))} />
           )}
 
           {tab === "zones" && (
-            <div className="zone-list">
-              {(zones.length ? zones.map((z) => ({name:z.name,score:z.score,radius:`${(z.radius_m/1000).toFixed(1)} km`,reason:z.rationale || "Chưa có giải thích"})) : demoZones).map((zone) => (
-                <div className="zone-card" key={zone.name}>
-                  <div className="zone-score">{zone.score}</div>
-                  <div className="zone-content">
-                    <div className="zone-title-row">
-                      <strong>{zone.name}</strong>
-                      <span>{zone.radius}</span>
-                    </div>
-                    <div className="progress"><div style={{ width: `${zone.score}%` }}></div></div>
-                    <p>{zone.reason}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ZonesPanel caseId={activeCase.dbId} items={zones} onCreated={(item)=>setZones(prev=>[...prev,item].sort((a,b)=>b.score-a.score))} />
           )}
 
           {tab === "evidence" && (
@@ -255,21 +230,8 @@ export default function App() {
           )}
 
           {tab === "ai" && (
-            <div className="ai-card">
-              <div className="ai-icon"><Bot size={28} /></div>
-              <div>
-                <h4>AI Search Assistant</h4>
-                <p>
-                  Dữ liệu hiện tại ưu tiên Zone A do có dấu vết xác minh gần nhất và hướng
-                  di chuyển phù hợp. Zone B cần được rà soát song song nếu xuất hiện bằng chứng mới.
-                </p>
-                <div className="ai-disclaimer">
-                  AI chỉ đưa ra gợi ý hỗ trợ. Kết luận và quyết định nghiệp vụ phải do người có thẩm quyền xác minh.
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
+            <AIAnalysisPanel caseId={activeCase.dbId} />
+          )}        </section>
       </main>
 
       {showCreate && (
