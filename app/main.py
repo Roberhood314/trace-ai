@@ -382,8 +382,7 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
     image_url = row.image_url
     headers = {
         "User-Agent": "TRACE-AI/1.4 (+official public-data image proxy)",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Referer": OFFICIAL_WANTED_URL,
+        "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
     }
 
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
