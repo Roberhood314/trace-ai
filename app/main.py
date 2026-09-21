@@ -26,7 +26,7 @@ from .schemas import (
 )
 from .security import CurrentUser, Role, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, utcnow_naive
-from .services.gateway import public_gateway_signals, public_gateway_status, weather_snapshot
+from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -343,6 +343,13 @@ def gateway_status_public(db: Session = Depends(get_db)):
 @app.get("/public/gateway/signals")
 def gateway_signals_public(q: str | None = None, limit: int = 50, db: Session = Depends(get_db)):
     return public_gateway_signals(db, q=q, limit=limit)
+
+@app.get("/public/gateway/response-units")
+async def gateway_response_units_public():
+    try:
+        return await response_units_snapshot()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"response-unit gateway unavailable: {exc.__class__.__name__}")
 
 @app.get("/public/gateway/weather")
 async def gateway_weather_public(lat: float, lon: float):
