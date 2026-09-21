@@ -1,35 +1,64 @@
-# TRACE-AI
+# TRACE-AI — Pi-ready Release Candidate
 
-Nền tảng hỗ trợ quản lý vụ việc, người cần tìm, timeline dấu vết, vùng tìm kiếm và phân tích hỗ trợ nghiệp vụ.
+TRACE-AI là web app hỗ trợ quản lý vụ việc tìm kiếm/người mất tích, timeline dấu vết, bản đồ vùng tìm kiếm, chứng cứ và phân tích hỗ trợ. Frontend được thiết kế mobile-first cho Pi Browser/Pi App Studio; backend FastAPI đảm nhiệm xác thực, dữ liệu và audit.
 
-## Nguyên tắc
-- Không lưu khóa API, mật khẩu hoặc dữ liệu cá nhân thật trong repository.
-- Dữ liệu CCCD, thuê bao, IP, vị trí thiết bị, camera nghiệp vụ hoặc dữ liệu nhà mạng chỉ đi qua nguồn được cấp quyền.
-- Mọi truy cập dữ liệu nhạy cảm phải có RBAC và audit log.
-- AI chỉ hỗ trợ tổng hợp và đề xuất; quyết định nghiệp vụ do người có thẩm quyền thực hiện.
+## Release
+- Version: `1.0.0-rc1`
+- Frontend: React + Vite + Leaflet + Pi SDK
+- Backend: FastAPI + SQLAlchemy
+- Dev DB: SQLite
+- Deployment DB: PostgreSQL/PostGIS-ready
+
+## Chức năng
+- Đăng nhập Pi SDK và xác minh token server-side.
+- Tài khoản nội bộ gắn Pi UID; role viewer/analyst/commander/admin.
+- Tạo và quản lý vụ việc.
+- Hồ sơ người cần tìm.
+- Timeline dấu vết có nguồn, tọa độ và độ tin cậy.
+- Bản đồ marker + vùng tìm kiếm A/B/C.
+- Upload ảnh/video chứng cứ có kiểm soát truy cập.
+- Audit log cho thao tác nhạy cảm.
+- Bảng quản trị quyền.
+- AI Search Assistant dạng tổng hợp/decision-support, không tự ra quyết định nghiệp vụ.
+- Privacy Policy template và placeholder xác minh domain Pi.
+
+## Không phải chức năng của bản release
+Ứng dụng không tự quét IP/GPS của người xung quanh, không thu thập dữ liệu thuê bao/CCCD/camera công cộng trái quyền, không coi điện thoại thường là camera nhiệt/vân tay pháp y. Các nguồn dữ liệu nghiệp vụ phải được tích hợp qua gateway được cấp quyền.
 
 ## Chạy local
+
+Backend:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
+export DEV_AUTH_BYPASS=true
 uvicorn app.main:app --reload
 ```
 
-Mở:
-- API docs: http://127.0.0.1:8000/docs
-- Health: http://127.0.0.1:8000/health
-
-## Docker
+Frontend:
 
 ```bash
-docker compose up --build
+cd web
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-## Cấu trúc
-- `app/main.py`: FastAPI app
-- `app/models.py`: dữ liệu vụ việc, người cần tìm, timeline, vùng tìm kiếm, audit
-- `app/schemas.py`: request/response schemas
-- `app/security.py`: RBAC nền
-- `app/services/search_zone.py`: logic chấm điểm vùng tìm kiếm thử nghiệm
+## Test
+
+```bash
+PYTHONPATH=. APP_ENV=development DEV_AUTH_BYPASS=true \
+DATABASE_URL=sqlite:///./test_trace_ai.db python -m pytest -q
+
+cd web
+npm install
+npm run build
+```
+
+## Production
+Đọc [DEPLOYMENT.md](./DEPLOYMENT.md), [SECURITY.md](./SECURITY.md) và [PI_APP_STUDIO.md](./PI_APP_STUDIO.md) trước khi đưa dữ liệu thật vào hệ thống.
+
+**Bắt buộc:** đổi `APP_SECRET`, tắt `DEV_AUTH_BYPASS`, cấu hình HTTPS/CORS, khai báo bootstrap admin, dùng storage riêng cho evidence, cấu hình retention/backup và thay thông tin operator trong Privacy Policy.
