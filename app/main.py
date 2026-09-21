@@ -87,8 +87,10 @@ async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)
 
     user = db.scalar(select(User).where(User.pi_uid == uid))
     bootstrap_admins = {x.strip() for x in os.getenv("BOOTSTRAP_ADMIN_PI_UIDS", "").split(",") if x.strip()}
+    bootstrap_names = {x.strip().lower() for x in os.getenv("BOOTSTRAP_ADMIN_PI_USERNAMES", "").split(",") if x.strip()}
+    is_bootstrap_admin = uid in bootstrap_admins or (username or "").lower() in bootstrap_names
     if not user:
-        user = User(pi_uid=uid, username=username, role="admin" if uid in bootstrap_admins else "viewer")
+        user = User(pi_uid=uid, username=username, role="admin" if is_bootstrap_admin else "viewer")
         db.add(user)
     else:
         user.username = username
@@ -234,14 +236,21 @@ def get_evidence_content(evidence_id: int, db: Session = Depends(get_db), user: 
 @app.get("/cases/{case_id}/audit", response_model=list[AuditOut])
 def case_audit(case_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.COMMANDER))):
     ensure_case(db, case_id)
-    resource_ids = {str(case_id)}
+    clauses = [((AuditEvent.resource_type == "case") & (AuditEvent.resource_id == str(case_id)))]
     person = db.scalar(select(MissingPerson).where(MissingPerson.case_id == case_id))
-    if person: resource_ids.add(str(person.id))
+    if person:
+        clauses.append((AuditEvent.resource_type == "missing_person") & (AuditEvent.resource_id == str(person.id)))
     event_ids = [str(x) for x in db.scalars(select(TimelineEvent.id).where(TimelineEvent.case_id == case_id)).all()]
     zone_ids = [str(x) for x in db.scalars(select(SearchZone.id).where(SearchZone.case_id == case_id)).all()]
     evidence_ids = [str(x) for x in db.scalars(select(Evidence.id).where(Evidence.case_id == case_id)).all()]
-    resource_ids.update(event_ids + zone_ids + evidence_ids)
-    rows = list(db.scalars(select(AuditEvent).where(AuditEvent.resource_id.in_(resource_ids)).order_by(AuditEvent.occurred_at.desc())).all())
+    if event_ids:
+        clauses.append((AuditEvent.resource_type == "timeline_event") & AuditEvent.resource_id.in_(event_ids))
+    if zone_ids:
+        clauses.append((AuditEvent.resource_type == "search_zone") & AuditEvent.resource_id.in_(zone_ids))
+    if evidence_ids:
+        clauses.append((AuditEvent.resource_type == "evidence") & AuditEvent.resource_id.in_(evidence_ids))
+    from sqlalchemy import or_
+    rows = list(db.scalars(select(AuditEvent).where(or_(*clauses)).order_by(AuditEvent.occurred_at.desc())).all())
     return rows
 
 @app.get("/cases/{case_id}/ai-summary", response_model=AISummaryOut)
