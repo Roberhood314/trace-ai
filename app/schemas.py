@@ -104,3 +104,27 @@ class UserOut(BaseModel):
 class UserRoleUpdate(BaseModel):
     role: str = Field(pattern="^(viewer|analyst|commander|admin)$")
     is_active: bool | None = None
+
+class WantedRecordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    full_name: str
+    birth_year: int | None = None
+    registered_address: str | None = None
+    parents: str | None = None
+    offense: str | None = None
+    warrant_reference: str | None = None
+    issuing_unit: str | None = None
+    detail_url: str | None = None
+    source_url: str
+    source_name: str
+    imported_at: datetime
+    last_seen_at: datetime
+
+class WantedSyncOut(BaseModel):
+    source: str
+    fetched_pages: int
+    parsed_records: int
+    inserted: int
+    updated: int
+    synced_at: datetime
