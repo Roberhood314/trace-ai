@@ -423,13 +423,13 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=502, detail="official source did not return an image")
 
         if content_type in {"image/jpeg", "image/jpg"}:
-            if not image_bytes.startswith(b"\\xff\\xd8"):
+            if not image_bytes.startswith(b"\xff\xd8"):
                 raise HTTPException(status_code=502, detail="official JPEG signature is invalid")
-            end = image_bytes.find(b"\\xff\\xd9")
+            end = image_bytes.find(b"\xff\xd9")
             if end >= 0:
                 image_bytes = image_bytes[: end + 2]
         elif content_type == "image/png":
-            marker = b"IEND\\xaeB\\x60\\x82"
+            marker = b"IEND\xaeB\x60\x82"
             end = image_bytes.find(marker)
             if end >= 0:
                 image_bytes = image_bytes[: end + len(marker)]
