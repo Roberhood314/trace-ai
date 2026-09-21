@@ -1,0 +1,23 @@
+services:
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://trace_ai:change_me@db:5432/trace_ai
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: trace_ai
+      POSTGRES_USER: trace_ai
+      POSTGRES_PASSWORD: change_me
+    volumes:
+      - trace_ai_db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  trace_ai_db:
