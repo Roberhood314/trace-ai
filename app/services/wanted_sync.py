@@ -1,26 +1,55 @@
 import asyncio
 import hashlib
+import json
 import re
 import unicodedata
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
 OFFICIAL_WANTED_URL = "https://truyna.bocongan.gov.vn/%C4%90%E1%BB%91i-t%C6%B0%E1%BB%A3ng-truy-n%C3%A3"
+OFFICIAL_SUSPENDED_URL = "https://truyna.bocongan.gov.vn/%C4%90%E1%BB%91i-t%C6%B0%E1%BB%A3ng-%C4%91%C3%ACnh-n%C3%A3"
 SOURCE_NAME = "Cổng thông tin truy nã - Bộ Công an"
+
 
 def _clean(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
 
-def _source_key(detail_url: str | None, cells: list[str]) -> str:
-    raw = detail_url or "|".join(cells)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 def _ascii_text(value: str | None) -> str:
     text = unicodedata.normalize("NFD", _clean(value)).lower()
     return "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+
+
+def _source_record_id(detail_url: str | None) -> str | None:
+    if not detail_url:
+        return None
+    m = re.search(r"/ma/([0-9a-fA-F-]{16,})", detail_url)
+    if m:
+        return m.group(1).lower()
+    parsed = urlparse(detail_url)
+    m = re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F-]{27,})", parsed.path)
+    return m.group(1).lower() if m else None
+
+
+def _source_key(detail_url: str | None, cells: list[str]) -> str:
+    stable_id = _source_record_id(detail_url)
+    raw = stable_id or detail_url or "|".join(cells)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def record_checksum(record: dict) -> str:
+    fields = (
+        "source_record_id", "full_name", "birth_year", "registered_address",
+        "parents", "offense", "warrant_reference", "issuing_unit",
+        "detail_url", "image_url", "danger_level", "status",
+    )
+    payload = {k: record.get(k) for k in fields}
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 def parse_wanted_detail(html: str, page_url: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
@@ -43,7 +72,7 @@ def parse_wanted_detail(html: str, page_url: str) -> dict:
             score += 100
         if "truy na" in marker:
             score += 40
-        if any(k in src_key for k in ("truyna", "truy-na", "doituong", "doi-tuong", "wanted")):
+        if any(k in src_key for k in ("truyna", "truy-na", "doituong", "doi-tuong", "wanted", "showimage")):
             score += 20
         if any(k in src_key for k in ("logo", "icon", "banner", "avatar-default", "no-image")):
             score -= 80
@@ -75,14 +104,13 @@ def parse_wanted_detail(html: str, page_url: str) -> dict:
 
     return {"image_url": image_url, "danger_level": danger_level}
 
-def parse_wanted_page(html: str, page_url: str) -> tuple[list[dict], list[str]]:
+
+def parse_wanted_page(html: str, page_url: str, status: str = "active") -> tuple[list[dict], list[str]]:
     soup = BeautifulSoup(html, "lxml")
     records: list[dict] = []
 
-    tables = soup.find_all("table")
-    for table in tables:
-        rows = table.find_all("tr")
-        for tr in rows:
+    for table in soup.find_all("table"):
+        for tr in table.find_all("tr"):
             cells = tr.find_all("td")
             if len(cells) < 8:
                 continue
@@ -90,16 +118,14 @@ def parse_wanted_page(html: str, page_url: str) -> tuple[list[dict], list[str]]:
             if not values[0].isdigit():
                 continue
 
-            name_cell = cells[1]
-            anchor = name_cell.find("a", href=True)
+            anchor = cells[1].find("a", href=True)
             detail_url = urljoin(page_url, anchor["href"]) if anchor else None
-
-            birth_year = None
-            if re.fullmatch(r"\d{4}", values[2]):
-                birth_year = int(values[2])
+            birth_year = int(values[2]) if re.fullmatch(r"\d{4}", values[2]) else None
+            source_record_id = _source_record_id(detail_url)
 
             record = {
                 "source_key": _source_key(detail_url, values),
+                "source_record_id": source_record_id,
                 "full_name": values[1],
                 "birth_year": birth_year,
                 "registered_address": values[3] or None,
@@ -110,7 +136,9 @@ def parse_wanted_page(html: str, page_url: str) -> tuple[list[dict], list[str]]:
                 "detail_url": detail_url,
                 "source_url": page_url,
                 "source_name": SOURCE_NAME,
+                "status": status,
             }
+            record["checksum"] = record_checksum(record)
             if record["full_name"]:
                 records.append(record)
 
@@ -118,64 +146,103 @@ def parse_wanted_page(html: str, page_url: str) -> tuple[list[dict], list[str]]:
     for a in soup.find_all("a", href=True):
         text = _clean(a.get_text(" ", strip=True))
         href = urljoin(page_url, a["href"])
-        if (text.isdigit() or text in {">", ">>"}) and "truyna.bocongan.gov.vn" in href:
+        if (text.isdigit() or text in {">", ">>", "Tiếp", "Cuối"}) and "truyna.bocongan.gov.vn" in href:
             next_pages.append(href)
 
+    unique_pages: list[str] = []
     seen = set()
-    unique_pages = []
     for item in next_pages:
         if item not in seen and item != page_url:
             seen.add(item)
             unique_pages.append(item)
-
     return records, unique_pages
 
-async def fetch_official_wanted(max_pages: int = 3, detail_limit: int = 40) -> tuple[list[dict], int]:
-    max_pages = max(1, min(int(max_pages), 10))
-    queue = [OFFICIAL_WANTED_URL]
+
+async def fetch_official_list(
+    start_url: str,
+    status: str,
+    max_pages: int = 250,
+) -> tuple[list[dict], int]:
+    max_pages = max(1, min(int(max_pages), 500))
+    queue = [start_url]
     visited: set[str] = set()
     all_records: dict[str, dict] = {}
-
     headers = {
-        "User-Agent": "TRACE-AI/1.0 (+authorized public-data sync; source attribution retained)",
+        "User-Agent": "TRACE-AI/1.4 (+official public-data sync; source attribution retained)",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
     }
 
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True, headers=headers) as client:
         while queue and len(visited) < max_pages:
             url = queue.pop(0)
             if url in visited:
                 continue
             response = await client.get(url)
             response.raise_for_status()
-            visited.add(str(response.url))
-            records, discovered = parse_wanted_page(response.text, str(response.url))
+            canonical = str(response.url)
+            visited.add(canonical)
+            records, discovered = parse_wanted_page(response.text, canonical, status=status)
             for record in records:
                 all_records[record["source_key"]] = record
             for next_url in discovered:
                 if next_url not in visited and next_url not in queue:
                     queue.append(next_url)
 
-        records = list(all_records.values())
-        sem = asyncio.Semaphore(5)
-
-        async def enrich(record: dict):
-            detail_url = record.get("detail_url")
-            if not detail_url:
-                return
-            async with sem:
-                try:
-                    response = await client.get(detail_url)
-                    response.raise_for_status()
-                    record.update(parse_wanted_detail(response.text, str(response.url)))
-                except httpx.HTTPError:
-                    record.setdefault("image_url", None)
-                    record.setdefault("danger_level", None)
-
-        detail_candidates = [r for r in records if r.get("detail_url")][:max(0, min(int(detail_limit), 100))]
-        await asyncio.gather(*(enrich(r) for r in detail_candidates))
-
     return list(all_records.values()), len(visited)
+
+
+async def fetch_official_wanted(
+    max_pages: int = 250,
+    detail_limit: int = 0,
+    include_suspended: bool = True,
+    suspended_pages: int | None = None,
+) -> tuple[list[dict], int]:
+    active_records, active_pages = await fetch_official_list(
+        OFFICIAL_WANTED_URL, "active", max_pages=max_pages
+    )
+    combined = {r["source_key"]: r for r in active_records}
+    total_pages = active_pages
+
+    if include_suspended:
+        suspended_records, fetched = await fetch_official_list(
+            OFFICIAL_SUSPENDED_URL,
+            "dinh_na",
+            max_pages=suspended_pages or max_pages,
+        )
+        total_pages += fetched
+        for record in suspended_records:
+            combined[record["source_key"]] = record
+
+    records = list(combined.values())
+
+    # Detail enrichment is intentionally bounded. Full sync stays list-first;
+    # images and missing detail metadata are loaded on demand by the image endpoint.
+    detail_limit = max(0, min(int(detail_limit), 200))
+    if detail_limit:
+        sem = asyncio.Semaphore(4)
+        headers = {
+            "User-Agent": "TRACE-AI/1.4 (+official public-data detail sync)",
+            "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
+        }
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+            async def enrich(record: dict):
+                detail_url = record.get("detail_url")
+                if not detail_url:
+                    return
+                async with sem:
+                    try:
+                        response = await client.get(detail_url)
+                        response.raise_for_status()
+                        record.update(parse_wanted_detail(response.text, str(response.url)))
+                        record["checksum"] = record_checksum(record)
+                    except httpx.HTTPError:
+                        pass
+
+            candidates = [r for r in records if r.get("detail_url")][:detail_limit]
+            await asyncio.gather(*(enrich(r) for r in candidates))
+
+    return records, total_pages
+
 
 def utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
