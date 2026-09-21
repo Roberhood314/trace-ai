@@ -89,3 +89,20 @@ class Evidence(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+class WantedRecord(Base):
+    __tablename__ = "wanted_records"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(255), index=True)
+    birth_year: Mapped[int | None] = mapped_column(nullable=True)
+    registered_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parents: Mapped[str | None] = mapped_column(Text, nullable=True)
+    offense: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warrant_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    issuing_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    source_name: Mapped[str] = mapped_column(String(255), default="Cổng thông tin truy nã - Bộ Công an")
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
