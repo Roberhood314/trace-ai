@@ -1,5 +1,6 @@
 import base64
 import asyncio
+import json
 import os
 import uuid
 import urllib.request
@@ -13,11 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
-from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User, WantedRecord
+from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -28,7 +29,7 @@ from .schemas import (
     WantedRecordOut, WantedSyncOut,
 )
 from .security import CurrentUser, Role, issue_token, require_role
-from .services.wanted_sync import OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, parse_wanted_detail, utcnow_naive
+from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 
 def validate_runtime_config():
@@ -42,6 +43,25 @@ def validate_runtime_config():
 validate_runtime_config()
 Base.metadata.create_all(bind=engine)
 
+def ensure_wanted_schema():
+    """Additive migration for deployments created before wanted delta-sync fields existed."""
+    existing = {c["name"] for c in inspect(engine).get_columns("wanted_records")}
+    dialect = engine.dialect.name
+    additions = {
+        "source_record_id": "VARCHAR(128)",
+        "status": "VARCHAR(32) DEFAULT 'active'",
+        "checksum": "VARCHAR(64)",
+        "source_updated_at": "TIMESTAMP" if dialect == "postgresql" else "DATETIME",
+    }
+    with engine.begin() as conn:
+        for column, ddl in additions.items():
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE wanted_records ADD COLUMN {column} {ddl}"))
+        conn.execute(text("UPDATE wanted_records SET status='active' WHERE status IS NULL"))
+    Base.metadata.create_all(bind=engine)
+
+ensure_wanted_schema()
+
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
@@ -51,7 +71,7 @@ IMAGE_FETCH_SEMAPHORE = asyncio.Semaphore(6)
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.4.6-rc1",
+    version="1.5.0-rc1",
     description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
 )
 
@@ -95,48 +115,152 @@ def ensure_case(db: Session, case_id: int) -> Case:
         raise HTTPException(status_code=404, detail="case not found")
     return case
 
+def _wanted_snapshot(item: dict) -> str:
+    return json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _apply_wanted_records(db: Session, records: list[dict], actor: str, action: str, fetched_pages: int):
+    now = utcnow_naive()
+    inserted = updated = unchanged = 0
+    active_records = suspended_records = 0
+
+    for item in records:
+        item = dict(item)
+        item["checksum"] = item.get("checksum") or record_checksum(item)
+        if item.get("status") == "dinh_na":
+            suspended_records += 1
+        else:
+            active_records += 1
+
+        row = db.scalar(select(WantedRecord).where(WantedRecord.source_key == item["source_key"]))
+        if row is None and item.get("source_record_id"):
+            row = db.scalar(select(WantedRecord).where(WantedRecord.source_record_id == item["source_record_id"]))
+        if row is None and item.get("detail_url"):
+            row = db.scalar(select(WantedRecord).where(WantedRecord.detail_url == item["detail_url"]))
+
+        if row is None:
+            row = WantedRecord(**item, imported_at=now, last_seen_at=now, source_updated_at=now)
+            db.add(row)
+            db.flush()
+            db.add(WantedRecordHistory(
+                wanted_record_id=row.id,
+                source_key=item["source_key"],
+                change_type="insert",
+                old_checksum=None,
+                new_checksum=item["checksum"],
+                snapshot_json=_wanted_snapshot(item),
+                changed_at=now,
+            ))
+            inserted += 1
+            continue
+
+        old_checksum = row.checksum
+        changed = old_checksum != item["checksum"]
+        # last_seen_at proves the public source still contained this record.
+        row.last_seen_at = now
+        if changed:
+            for field, value in item.items():
+                setattr(row, field, value)
+            row.source_updated_at = now
+            db.add(WantedRecordHistory(
+                wanted_record_id=row.id,
+                source_key=item["source_key"],
+                change_type="status_change" if row.status != item.get("status") else "update",
+                old_checksum=old_checksum,
+                new_checksum=item["checksum"],
+                snapshot_json=_wanted_snapshot(item),
+                changed_at=now,
+            ))
+            updated += 1
+        else:
+            # Backfill stable source id/status without rewriting unchanged source data.
+            if not row.source_record_id and item.get("source_record_id"):
+                row.source_record_id = item["source_record_id"]
+            if not row.checksum:
+                row.checksum = item["checksum"]
+            unchanged += 1
+
+    db.add(AuditEvent(
+        actor=actor,
+        action=action,
+        resource_type="wanted_source",
+        detail=(
+            f"pages={fetched_pages};records={len(records)};inserted={inserted};"
+            f"updated={updated};unchanged={unchanged};active={active_records};"
+            f"suspended={suspended_records}"
+        ),
+    ))
+    db.commit()
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "active_records": active_records,
+        "suspended_records": suspended_records,
+    }
+
+
+async def _run_wanted_sync(full: bool, actor: str = "system"):
+    if full:
+        pages = max(50, min(int(os.getenv("WANTED_FULL_SYNC_PAGES", "250") or 250), 500))
+        detail_limit = max(0, min(int(os.getenv("WANTED_FULL_DETAIL_LIMIT", "0") or 0), 200))
+        action = "wanted_full_sync"
+    else:
+        pages = max(1, min(int(os.getenv("WANTED_DELTA_PAGES", "5") or 5), 25))
+        detail_limit = max(0, min(int(os.getenv("WANTED_DELTA_DETAIL_LIMIT", "10") or 10), 50))
+        action = "wanted_delta_sync"
+
+    records, fetched_pages = await fetch_official_wanted(
+        max_pages=pages,
+        detail_limit=detail_limit,
+        include_suspended=True,
+        suspended_pages=pages,
+    )
+    with SessionLocal() as db:
+        stats = _apply_wanted_records(db, records, actor, action, fetched_pages)
+    return records, fetched_pages, stats
+
+
 async def _system_sync_wanted():
-    interval = int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "0") or 0)
-    if interval < 30:
-        return
-    pages = max(1, min(int(os.getenv("WANTED_AUTO_SYNC_PAGES", "3") or 3), 10))
-    detail_limit = max(0, min(int(os.getenv("WANTED_DETAIL_LIMIT", "40") or 40), 100))
+    interval = max(30, int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "60") or 60))
+    full_hours = max(6, int(os.getenv("WANTED_FULL_SYNC_HOURS", "24") or 24))
+    last_full = None
+
+    # Bootstrap a full catalog only when the local registry is still small.
+    try:
+        with SessionLocal() as db:
+            current_count = len(list(db.scalars(select(WantedRecord.id)).all()))
+        if current_count < 1000:
+            await _run_wanted_sync(full=True)
+            last_full = datetime.now(timezone.utc)
+    except Exception as exc:
+        with SessionLocal() as db:
+            db.add(AuditEvent(actor="system", action="wanted_sync_error", resource_type="wanted_source", detail=exc.__class__.__name__))
+            db.commit()
+
     while True:
         try:
-            records, fetched_pages = await fetch_official_wanted(max_pages=pages, detail_limit=detail_limit)
-            now = utcnow_naive()
+            now = datetime.now(timezone.utc)
+            due_full = last_full is None or (now - last_full).total_seconds() >= full_hours * 3600
+            await _run_wanted_sync(full=due_full)
+            if due_full:
+                last_full = now
+        except Exception as exc:
             with SessionLocal() as db:
-                inserted = 0
-                updated = 0
-                for item in records:
-                    row = db.scalar(select(WantedRecord).where(WantedRecord.source_key == item["source_key"]))
-                    if row is None:
-                        db.add(WantedRecord(**item, imported_at=now, last_seen_at=now))
-                        inserted += 1
-                    else:
-                        for field, value in item.items():
-                            setattr(row, field, value)
-                        row.last_seen_at = now
-                        updated += 1
-                db.add(AuditEvent(
-                    actor="system",
-                    action="wanted_auto_sync",
-                    resource_type="wanted_source",
-                    detail=f"pages={fetched_pages};records={len(records)};inserted={inserted};updated={updated}",
-                ))
+                db.add(AuditEvent(actor="system", action="wanted_sync_error", resource_type="wanted_source", detail=exc.__class__.__name__))
                 db.commit()
-        except Exception:
-            pass
         await asyncio.sleep(interval * 60)
+
 
 @app.on_event("startup")
 async def start_wanted_auto_sync():
-    if int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "0") or 0) >= 30:
+    if int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "60") or 60) >= 30:
         asyncio.create_task(_system_sync_wanted())
+
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.4.6-rc1"}
+    return {"status": "ok", "service": "trace-ai", "version": "1.5.0-rc1"}
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
