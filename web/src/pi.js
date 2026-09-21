@@ -1,4 +1,4 @@
-import { verifyPiAccessToken } from "./api";
+import { setSessionToken, verifyPiAccessToken } from "./api";
 
 export function initPi() {
   if (!window.Pi) return false;
@@ -13,20 +13,14 @@ export function initPi() {
 
 export async function authenticatePi() {
   if (!window.Pi) {
-    return {
-      uid: "demo-user",
-      username: "Demo Operator",
-      verified: false,
-      demo: true
-    };
+    setSessionToken("");
+    return { uid: "demo-user", username: "Demo Operator", role: "admin", verified: false, demo: true };
   }
-
   const auth = await window.Pi.authenticate(["username"], () => {});
   const verified = await verifyPiAccessToken(auth.accessToken);
-
   return {
-    uid: verified.uid,
     username: verified.username,
+    role: verified.role,
     verified: true,
     demo: false
   };
