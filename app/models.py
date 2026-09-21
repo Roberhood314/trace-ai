@@ -94,6 +94,7 @@ class WantedRecord(Base):
     __tablename__ = "wanted_records"
     id: Mapped[int] = mapped_column(primary_key=True)
     source_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    source_record_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), index=True)
     birth_year: Mapped[int | None] = mapped_column(nullable=True)
     registered_address: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -106,5 +107,19 @@ class WantedRecord(Base):
     danger_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_url: Mapped[str] = mapped_column(Text)
     source_name: Mapped[str] = mapped_column(String(255), default="Cổng thông tin truy nã - Bộ Công an")
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+class WantedRecordHistory(Base):
+    __tablename__ = "wanted_record_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    wanted_record_id: Mapped[int | None] = mapped_column(ForeignKey("wanted_records.id"), nullable=True, index=True)
+    source_key: Mapped[str] = mapped_column(String(255), index=True)
+    change_type: Mapped[str] = mapped_column(String(32))
+    old_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    new_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
