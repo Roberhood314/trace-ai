@@ -20,6 +20,8 @@ import EvidencePanel from "./EvidencePanel";
 import TimelinePanel from "./TimelinePanel";
 import ZonesPanel from "./ZonesPanel";
 import AIAnalysisPanel from "./AIAnalysisPanel";
+import AuditPanel from "./AuditPanel";
+import AdminPanel from "./AdminPanel";
 import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones } from "./api";
 import { demoCases, demoZones } from "./demoData";
 
@@ -189,7 +191,9 @@ export default function App() {
               ["timeline", "Timeline"],
               ["zones", "Vùng tìm kiếm"],
               ["evidence", "Chứng cứ"],
-              ["ai", "AI phân tích"]
+              ["ai", "AI phân tích"],
+              ...(user && ["commander","admin"].includes(user.role) ? [["audit","Audit"]] : []),
+              ...(user?.role === "admin" ? [["admin","Quản trị"]] : [])
             ].map(([key, label]) => (
               <button
                 key={key}
@@ -207,9 +211,9 @@ export default function App() {
 
               <div className="summary-card">
                 <h4>Thông tin nhanh</h4>
-                <div className="summary-row"><span>Lần cuối xác minh</span><strong>{activeCase.lastSeen}</strong></div>
-                <div className="summary-row"><span>Bán kính hiện tại</span><strong>{activeCase.radius}</strong></div>
-                <div className="summary-row"><span>Độ tin cậy tổng hợp</span><strong>{activeCase.confidence}%</strong></div>
+                <div className="summary-row"><span>Lần cuối xác minh</span><strong>{timeline.length ? new Date(timeline[timeline.length-1].event_time).toLocaleString("vi-VN") : activeCase.lastSeen}</strong></div>
+                <div className="summary-row"><span>Bán kính lớn nhất</span><strong>{zones.length ? `${(Math.max(...zones.map(z=>z.radius_m))/1000).toFixed(1)} km` : activeCase.radius}</strong></div>
+                <div className="summary-row"><span>Độ tin cậy dấu vết</span><strong>{timeline.length ? `${Math.round(Math.max(...timeline.map(x=>x.confidence ?? 0))*100)}%` : `${activeCase.confidence}%`}</strong></div>
                 <div className="notice">
                   <AlertTriangle size={18} />
                   Chỉ sử dụng nguồn dữ liệu có quyền truy cập hợp lệ và được ghi audit log.
@@ -236,6 +240,12 @@ export default function App() {
 
           {tab === "ai" && (
             <AIAnalysisPanel caseId={activeCase.dbId} />
+          )}
+          {tab === "audit" && (
+            <AuditPanel caseId={activeCase.dbId} />
+          )}
+          {tab === "admin" && (
+            <AdminPanel />
           )}        </section>
       </main>
 
