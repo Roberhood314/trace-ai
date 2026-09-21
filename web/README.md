@@ -1,51 +1,28 @@
-# TRACE-AI Web / Pi App Studio
+# TRACE-AI Web — Pi App Studio
 
-Frontend mobile-first dành cho Pi Browser và luồng import/upload vào Pi App Studio.
+React/Vite frontend for Pi Browser and Pi App Studio.
 
-## Chạy local
-
+## Local
 ```bash
-cd web
 npm install
+cp .env.example .env
 npm run dev
 ```
 
 ## Build
-
 ```bash
+npm install
 npm run build
 ```
 
-Output nằm tại `web/dist`.
+Output: `dist/`.
 
-## Biến môi trường
+## Pi
+The Pi SDK is loaded in `index.html`. Pi authentication returns an access token which is verified by TRACE-AI backend before a signed app session is stored in the browser.
 
-```env
-VITE_API_BASE_URL=http://127.0.0.1:8000
-VITE_PI_SANDBOX=true
-```
+## Static production files
+- `public/privacy.html`: privacy policy template; replace operator details.
+- `public/validation-key.txt.example`: rename/create the actual `validation-key.txt` from Pi Developer Portal.
 
-## Pi SDK
-
-Pi SDK được nạp trong `index.html`. Frontend nhận access token từ Pi SDK và gửi về backend để xác minh với Pi Platform.
-
-Khi production:
-- đổi `VITE_PI_SANDBOX=false`;
-- bắt buộc HTTPS;
-- backend xác minh token;
-- không lưu API key/secret ở frontend;
-- chỉ yêu cầu scope thật sự cần thiết.
-
-## v0.5
-
-Frontend đã có:
-- dashboard;
-- tạo vụ việc;
-- hồ sơ người cần tìm;
-- timeline;
-- bản đồ + marker;
-- vùng tìm kiếm;
-- upload chứng cứ;
-- AI assistant panel.
-
-Upload ảnh/video hiện là **development MVP**. Dữ liệu thật cần private object storage và access control ở backend trước khi vận hành.
+## Release validation
+GitHub Actions Web Build passed for release candidate 1.0.0-rc1.
