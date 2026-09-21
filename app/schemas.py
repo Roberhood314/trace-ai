@@ -90,3 +90,17 @@ class AISummaryOut(BaseModel):
     summary: str
     recommended_checks: list[str]
     zone_order: list[str]
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    pi_uid: str
+    username: str | None = None
+    role: str
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
+
+class UserRoleUpdate(BaseModel):
+    role: str = Field(pattern="^(viewer|analyst|commander|admin)$")
+    is_active: bool | None = None
