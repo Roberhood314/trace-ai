@@ -3,7 +3,6 @@ import asyncio
 import json
 import os
 import uuid
-import urllib.request
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,11 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import inspect, or_, select, text
+from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
-from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
+from .models import AuditEvent, Case, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -32,6 +31,8 @@ from .schemas import (
 from .security import CurrentUser, Role, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
+from .observability import metrics_middleware, metrics_response
+from .job_queue import enqueue_job
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -100,6 +101,17 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Role"],
 )
+
+app.middleware("http")(metrics_middleware)
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()")
+    return response
 
 @app.middleware("http")
 async def public_read_cors(request, call_next):
@@ -334,6 +346,24 @@ async def start_wanted_auto_sync():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "trace-ai", "version": "1.5.0-rc2"}
+
+@app.get("/health/ready")
+def readiness():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {
+            "status": "ready",
+            "database": "ok",
+            "wanted_sync_running": bool(WANTED_SYNC_STATE.get("running")),
+            "wanted_sync_last_error": WANTED_SYNC_STATE.get("last_error"),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"database unavailable: {exc.__class__.__name__}")
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return metrics_response()
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
@@ -625,15 +655,13 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         if image_host != "truyna.bocongan.gov.vn":
             raise HTTPException(status_code=400, detail="unsupported official image host")
 
-        def fetch_image_bytes():
-            request = urllib.request.Request(image_url)
-            with urllib.request.urlopen(request, timeout=15) as source:
-                return source.read(), source.headers.get("content-type", "image/jpeg")
-
         try:
             async with IMAGE_FETCH_SEMAPHORE:
-                image_bytes, raw_content_type = await asyncio.to_thread(fetch_image_bytes)
-        except Exception as exc:
+                image_response = await client.get(image_url)
+                image_response.raise_for_status()
+                image_bytes = image_response.content
+                raw_content_type = image_response.headers.get("content-type", "image/jpeg")
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"official image fetch failed: {exc.__class__.__name__}")
 
         content_type = raw_content_type.split(";")[0].strip().lower()
@@ -696,10 +724,10 @@ def _wanted_query(q: str | None, status: str | None):
 
 def _wanted_source_status(db: Session):
     latest = db.scalar(select(WantedRecord).order_by(WantedRecord.last_seen_at.desc()).limit(1))
-    total = len(list(db.scalars(select(WantedRecord.id)).all()))
-    active = len(list(db.scalars(select(WantedRecord.id).where(WantedRecord.status == "active")).all()))
-    suspended = len(list(db.scalars(select(WantedRecord.id).where(WantedRecord.status == "dinh_na")).all()))
-    history = len(list(db.scalars(select(WantedRecordHistory.id)).all()))
+    total = db.scalar(select(func.count()).select_from(WantedRecord)) or 0
+    active = db.scalar(select(func.count()).select_from(WantedRecord).where(WantedRecord.status == "active")) or 0
+    suspended = db.scalar(select(func.count()).select_from(WantedRecord).where(WantedRecord.status == "dinh_na")) or 0
+    history = db.scalar(select(func.count()).select_from(WantedRecordHistory)) or 0
     return {
         "source_name": SOURCE_NAME,
         "source_url": OFFICIAL_WANTED_URL,
@@ -785,6 +813,43 @@ def wanted_record_history(
             .order_by(WantedRecordHistory.changed_at.desc())
             .limit(limit)
         ).all()
+    ]
+
+
+@app.post("/jobs/wanted-sync")
+def enqueue_wanted_sync_job(
+    full: bool = False,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    job = enqueue_job(db, "wanted_sync", {"full": full})
+    add_audit(db, user, "job_enqueue", "operational_job", job.id, f"type=wanted_sync;full={full}")
+    db.commit()
+    return {"id": job.id, "job_type": job.job_type, "status": job.status, "full": full}
+
+
+@app.get("/jobs")
+def list_jobs(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    limit = max(1, min(limit, 200))
+    rows = list(db.scalars(select(OperationalJob).order_by(OperationalJob.id.desc()).limit(limit)).all())
+    return [
+        {
+            "id": row.id,
+            "job_type": row.job_type,
+            "status": row.status,
+            "attempts": row.attempts,
+            "max_attempts": row.max_attempts,
+            "run_after": row.run_after,
+            "locked_at": row.locked_at,
+            "last_error": row.last_error,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in rows
     ]
 
 

@@ -19,9 +19,11 @@ RUN useradd --create-home --uid 10001 traceai \
     && mkdir -p /data/uploads /app/web-dist \
     && chown -R traceai:traceai /data /app
 
+COPY --chown=traceai:traceai alembic.ini ./alembic.ini
+COPY --chown=traceai:traceai alembic ./alembic
 COPY --chown=traceai:traceai app ./app
 COPY --from=web-build --chown=traceai:traceai /web/dist /app/web-dist
 
 USER traceai
 EXPOSE 8000
-CMD ["sh","-c","uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh","-c","alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
