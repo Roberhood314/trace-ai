@@ -12,11 +12,32 @@ jobs:
       APP_ENV: development
       DEV_AUTH_BYPASS: "true"
       APP_SECRET: test-secret-only
+      WANTED_AUTO_SYNC_MINUTES: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - run: pip install bandit pip-audit
       - run: python -m compileall -q app
+      - run: alembic upgrade head
       - run: PYTHONPATH=. python -m pytest -q
+      - name: Static security scan
+        run: bandit -q -r app -x tests -ll
+      - name: Dependency audit
+        run: pip-audit -r requirements.txt
+      - name: Start API for load smoke
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/trace-ai.log 2>&1 &
+          echo $! > /tmp/trace-ai.pid
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:8000/health/ready && break
+            sleep 1
+          done
+      - name: Load smoke
+        run: python scripts/load_test.py --requests 300 --concurrency 20 --p95-ms 750
+      - if: always()
+        run: |
+          test -f /tmp/trace-ai.log && tail -200 /tmp/trace-ai.log || true
+          test -f /tmp/trace-ai.pid && kill $(cat /tmp/trace-ai.pid) || true
