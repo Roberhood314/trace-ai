@@ -123,3 +123,18 @@ class WantedRecordHistory(Base):
     new_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
     snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+
+class OperationalJob(Base):
+    __tablename__ = "operational_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=3)
+    run_after: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
