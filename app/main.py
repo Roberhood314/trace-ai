@@ -97,7 +97,7 @@ async def security_headers(request, call_next):
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()")
     response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
-    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'self'")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'self' https://sdk.minepi.com; connect-src 'self' https://api.minepi.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'")
     return response
 
 @app.middleware("http")
