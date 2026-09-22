@@ -41,3 +41,62 @@ jobs:
         run: |
           test -f /tmp/trace-ai.log && tail -200 /tmp/trace-ai.log || true
           test -f /tmp/trace-ai.pid && kill $(cat /tmp/trace-ai.pid) || true
+
+  backup-restore:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: trace
+          POSTGRES_PASSWORD: trace
+          POSTGRES_DB: trace_ai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trace -d trace_ai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://trace:trace@127.0.0.1:5432/trace_ai
+      PGPASSWORD: trace
+      APP_ENV: development
+      APP_SECRET: backup-test-only
+      DEV_AUTH_BYPASS: "true"
+      WANTED_AUTO_SYNC_MINUTES: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: alembic upgrade head
+      - name: Seed sentinel
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          from app.database import SessionLocal
+          from app.models import Case
+          with SessionLocal() as db:
+              db.add(Case(case_code="BACKUP-RESTORE-SENTINEL", title="backup restore sentinel", status="open"))
+              db.commit()
+          PY
+      - name: Dump and restore
+        run: |
+          pg_dump -h 127.0.0.1 -U trace -d trace_ai -Fc -f /tmp/trace_ai.dump
+          psql -h 127.0.0.1 -U trace -d postgres -c "CREATE DATABASE trace_restore;"
+          pg_restore -h 127.0.0.1 -U trace -d trace_restore --no-owner /tmp/trace_ai.dump
+      - name: Validate restore
+        env:
+          RESTORED_DATABASE_URL: postgresql://trace:trace@127.0.0.1:5432/trace_restore
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          url = os.environ["RESTORED_DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://", 1)
+          engine = create_engine(url)
+          with engine.connect() as conn:
+              assert conn.execute(text("SELECT count(*) FROM cases WHERE case_code='BACKUP-RESTORE-SENTINEL'")).scalar_one() == 1
+              assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002_operational_jobs"
+              print("backup_restore_ok")
+          PY
