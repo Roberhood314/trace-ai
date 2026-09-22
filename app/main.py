@@ -3,7 +3,6 @@ import asyncio
 import json
 import os
 import uuid
-import urllib.request
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -656,15 +655,13 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         if image_host != "truyna.bocongan.gov.vn":
             raise HTTPException(status_code=400, detail="unsupported official image host")
 
-        def fetch_image_bytes():
-            request = urllib.request.Request(image_url)
-            with urllib.request.urlopen(request, timeout=15) as source:
-                return source.read(), source.headers.get("content-type", "image/jpeg")
-
         try:
             async with IMAGE_FETCH_SEMAPHORE:
-                image_bytes, raw_content_type = await asyncio.to_thread(fetch_image_bytes)
-        except Exception as exc:
+                image_response = await client.get(image_url)
+                image_response.raise_for_status()
+                image_bytes = image_response.content
+                raw_content_type = image_response.headers.get("content-type", "image/jpeg")
+        except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"official image fetch failed: {exc.__class__.__name__}")
 
         content_type = raw_content_type.split(";")[0].strip().lower()
