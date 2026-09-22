@@ -19,7 +19,7 @@ from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
-from .models import AuditEvent, Case, Evidence, MissingPerson, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
+from .models import AuditEvent, Case, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -33,6 +33,7 @@ from .security import CurrentUser, Role, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 from .observability import metrics_middleware, metrics_response
+from .job_queue import enqueue_job
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -815,6 +816,43 @@ def wanted_record_history(
             .order_by(WantedRecordHistory.changed_at.desc())
             .limit(limit)
         ).all()
+    ]
+
+
+@app.post("/jobs/wanted-sync")
+def enqueue_wanted_sync_job(
+    full: bool = False,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    job = enqueue_job(db, "wanted_sync", {"full": full})
+    add_audit(db, user, "job_enqueue", "operational_job", job.id, f"type=wanted_sync;full={full}")
+    db.commit()
+    return {"id": job.id, "job_type": job.job_type, "status": job.status, "full": full}
+
+
+@app.get("/jobs")
+def list_jobs(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    limit = max(1, min(limit, 200))
+    rows = list(db.scalars(select(OperationalJob).order_by(OperationalJob.id.desc()).limit(limit)).all())
+    return [
+        {
+            "id": row.id,
+            "job_type": row.job_type,
+            "status": row.status,
+            "attempts": row.attempts,
+            "max_attempts": row.max_attempts,
+            "run_after": row.run_after,
+            "locked_at": row.locked_at,
+            "last_error": row.last_error,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in rows
     ]
 
 
