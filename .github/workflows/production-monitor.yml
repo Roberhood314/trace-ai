@@ -1,0 +1,30 @@
+name: Production Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check readiness and wanted registry
+        env:
+          BASE_URL: https://trace-ai-production-b702.up.railway.app
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 "$BASE_URL/health/ready" -o /tmp/ready.json
+          curl --fail --silent --show-error --retry 3 "$BASE_URL/public/wanted/source-status" -o /tmp/wanted.json
+          python - <<'PY'
+          import json
+          ready = json.load(open("/tmp/ready.json"))
+          wanted = json.load(open("/tmp/wanted.json"))
+          assert ready.get("status") == "ready", ready
+          assert ready.get("database") == "ok", ready
+          assert not ready.get("wanted_sync_last_error"), ready
+          assert int(wanted.get("records", 0)) >= 7000, wanted
+          progress = wanted.get("sync_progress") or {}
+          assert not progress.get("last_error"), progress
+          print("production_monitor_ok records=", wanted.get("records"), "sync_running=", progress.get("running"))
+          PY
