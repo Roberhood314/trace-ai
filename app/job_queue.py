@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .models import OperationalJob
@@ -51,6 +51,18 @@ def claim_job(db: Session) -> OperationalJob | None:
     db.commit()
     db.refresh(job)
     return job
+
+
+def recover_stale_jobs(db: Session, lease_seconds: int = 300) -> int:
+    """Requeue work abandoned by a crash/redeploy after its lease expires."""
+    from datetime import timedelta
+    stale_before = utcnow_naive() - timedelta(seconds=max(30, lease_seconds))
+    result = db.execute(
+        update(OperationalJob).where(OperationalJob.status == "running", OperationalJob.locked_at < stale_before)
+        .values(status="queued", locked_at=None, updated_at=utcnow_naive(), last_error="worker lease expired; requeued")
+    )
+    db.commit()
+    return int(result.rowcount or 0)
 
 
 def complete_job(db: Session, job: OperationalJob) -> None:

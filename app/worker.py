@@ -5,7 +5,7 @@ import json
 import os
 
 from .database import SessionLocal
-from .job_queue import claim_job, complete_job, fail_job
+from .job_queue import claim_job, complete_job, fail_job, recover_stale_jobs
 
 
 async def handle(job_type: str, payload: dict) -> None:
@@ -20,6 +20,9 @@ async def handle(job_type: str, payload: dict) -> None:
 
 async def run_worker() -> None:
     poll_seconds = max(1.0, float(os.getenv("WORKER_POLL_SECONDS", "3")))
+    lease_seconds = max(30, int(os.getenv("WORKER_LEASE_SECONDS", "300")))
+    with SessionLocal() as db:
+        recover_stale_jobs(db, lease_seconds)
     while True:
         with SessionLocal() as db:
             job = claim_job(db)

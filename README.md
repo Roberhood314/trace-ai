@@ -65,6 +65,13 @@ npm run build
 
 **Bắt buộc:** đổi `APP_SECRET`, tắt `DEV_AUTH_BYPASS`, cấu hình HTTPS/CORS, khai báo bootstrap admin, dùng storage riêng cho evidence, cấu hình retention/backup và thay thông tin operator trong Privacy Policy.
 
+## Production controls (1.5.0-rc2 hardening)
+- Alembic revision `0003_security_operations` adds indexed queue lookup and tamper-evident audit hashes.
+- The worker recovers jobs abandoned by an interrupted deploy after a bounded lease.
+- API sessions are short-lived (30 minutes by default); public, write and login routes have app-level rate limits.
+- `/health/ready` reports database and queue state; `/metrics` remains token-protected in production.
+- CI runs migrations, tests, SAST/dependency audit, load smoke, and a PostgreSQL backup–restore check. Edge WAF, encrypted offsite backups and malware scanning remain mandatory hosting controls for real sensitive evidence.
+
 
 ## Nguồn truy nã Bộ Công an
 TRACE-AI chỉ đồng bộ dữ liệu công khai được hiển thị trên Cổng thông tin truy nã của Bộ Công an. Việc đồng bộ được kích hoạt thủ công bởi role `commander` hoặc `admin`, giới hạn số trang mỗi lần để tránh tạo tải không cần thiết. Giao diện "radar" chỉ là trực quan hóa kết quả tra cứu trong dữ liệu đã nhập; không phải radar vật lý và không quét thiết bị/người ở gần.

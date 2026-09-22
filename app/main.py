@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import asyncio
 import json
 import os
@@ -34,12 +35,15 @@ from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, S
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 from .observability import metrics_middleware, metrics_response
 from .job_queue import enqueue_job
+from .rate_limit import enforce as enforce_rate_limit
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
         secret = os.getenv("APP_SECRET", "")
         if not secret or secret.startswith("change-") or secret == "dev-only-change-me":
             raise RuntimeError("APP_SECRET must be replaced before production")
+        if len(secret) < 32:
+            raise RuntimeError("APP_SECRET must be at least 32 characters in production")
         if os.getenv("DEV_AUTH_BYPASS", "false").lower() == "true":
             raise RuntimeError("DEV_AUTH_BYPASS must be false in production")
 
@@ -92,6 +96,8 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'self'")
     return response
 
 @app.middleware("http")
@@ -104,16 +110,36 @@ async def public_read_cors(request, call_next):
         response.headers["Vary"] = "Origin"
     return response
 
+@app.middleware("http")
+async def rate_limit(request, call_next):
+    # Sensitive and expensive endpoints are protected even when a proxy limit
+    # is accidentally removed.  A distributed WAF remains required at scale.
+    path = request.url.path
+    if path == "/auth/pi/verify":
+        enforce_rate_limit(request, int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "12")))
+    elif request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+        enforce_rate_limit(request, int(os.getenv("WRITE_RATE_LIMIT_PER_MINUTE", "60")))
+    elif path.startswith("/public/"):
+        enforce_rate_limit(request, int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "240")))
+    return await call_next(request)
+
 class PiVerifyRequest(BaseModel):
     access_token: str
 
 def add_audit(db: Session, user: CurrentUser, action: str, resource_type: str, resource_id=None, detail=None):
+    previous = db.scalar(select(AuditEvent).where(AuditEvent.event_hash.is_not(None)).order_by(AuditEvent.id.desc()))
+    occurred_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    previous_hash = previous.event_hash if previous else None
+    canonical = "|".join([str(previous_hash or ""), user.uid, action, resource_type, str(resource_id or ""), str(detail or ""), occurred_at.isoformat()])
     row = AuditEvent(
         actor=user.uid,
         action=action,
         resource_type=resource_type,
         resource_id=None if resource_id is None else str(resource_id),
         detail=detail,
+        occurred_at=occurred_at,
+        previous_hash=previous_hash,
+        event_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
     )
     db.add(row)
 
@@ -333,11 +359,17 @@ def readiness():
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        with SessionLocal() as db:
+            queued = db.scalar(select(func.count()).select_from(OperationalJob).where(OperationalJob.status == "queued")) or 0
+            failed = db.scalar(select(func.count()).select_from(OperationalJob).where(OperationalJob.status == "failed")) or 0
+        JOB_QUEUE_DEPTH.set(queued)
         return {
             "status": "ready",
             "database": "ok",
             "wanted_sync_running": bool(WANTED_SYNC_STATE.get("running")),
             "wanted_sync_last_error": WANTED_SYNC_STATE.get("last_error"),
+            "queued_jobs": queued,
+            "failed_jobs": failed,
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"database unavailable: {exc.__class__.__name__}")

@@ -36,7 +36,7 @@ def issue_token(user: User) -> str:
         "username": user.username,
         "role": user.role,
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(hours=12)).timestamp()),
+        "exp": int((now + timedelta(minutes=max(5, int(os.getenv("ACCESS_TOKEN_MINUTES", "30"))))).timestamp()),
     }
     return jwt.encode(payload, _secret(), algorithm="HS256")
 

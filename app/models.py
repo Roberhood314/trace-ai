@@ -76,6 +76,8 @@ class AuditEvent(Base):
     resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    event_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
 
 class Evidence(Base):
     __tablename__ = "evidence"

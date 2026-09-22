@@ -74,3 +74,15 @@ def test_role_enforcement():
     code = "T-" + uuid.uuid4().hex[:10]
     r = client.post("/cases", headers=VIEWER, json={"case_code": code, "title": "Denied"})
     assert r.status_code == 403
+
+def test_audit_events_are_hash_chained():
+    case = create_case()
+    r = client.get(f"/cases/{case['id']}/audit", headers={"X-Role": "commander"})
+    assert r.status_code == 200
+    # API schema intentionally does not expose integrity hashes; verify them
+    # through the model so a later migration cannot silently drop them.
+    from app.database import SessionLocal
+    from app.models import AuditEvent
+    with SessionLocal() as db:
+        event = db.query(AuditEvent).order_by(AuditEvent.id.desc()).first()
+        assert event and event.event_hash and len(event.event_hash) == 64

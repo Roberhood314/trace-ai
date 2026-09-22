@@ -26,10 +26,9 @@ Never commit:
 - real case records/evidence
 
 ## Production hardening still required
-- managed secrets
-- encrypted backups/storage
-- malware scanning for uploads
-- rate limits/WAF
-- formal DB migrations
-- retention/deletion policy
-- incident response/log monitoring
+- Store secrets in Railway, rotate `APP_SECRET` through a planned maintenance window, and keep it at least 32 characters.
+- Use encrypted backups/storage, private evidence object storage, malware scanning and a retention/deletion policy before sensitive production use.
+- TRACE-AI enforces app-level request limits. Add a distributed WAF/rate limiter at the edge before public scale-out.
+- Alembic controls schema changes; never deploy a migration without a tested backup restore.
+- Audit events form a hash chain for tamper detection. Export audit data to a restricted log store for independent retention.
+- Maintain an incident runbook and alert on readiness failures, queue failures, unusual 401/429/5xx rates and worker lease recovery.
