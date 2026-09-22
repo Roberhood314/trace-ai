@@ -2,6 +2,7 @@ import base64
 import asyncio
 import json
 import os
+import hmac
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -9,15 +10,15 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from .database import Base, SessionLocal, engine, get_db
+from .database import SessionLocal, engine, get_db
 from .models import AuditEvent, Case, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
@@ -43,26 +44,6 @@ def validate_runtime_config():
             raise RuntimeError("DEV_AUTH_BYPASS must be false in production")
 
 validate_runtime_config()
-Base.metadata.create_all(bind=engine)
-
-def ensure_wanted_schema():
-    """Additive migration for deployments created before wanted delta-sync fields existed."""
-    existing = {c["name"] for c in inspect(engine).get_columns("wanted_records")}
-    dialect = engine.dialect.name
-    additions = {
-        "source_record_id": "VARCHAR(128)",
-        "status": "VARCHAR(32) DEFAULT 'active'",
-        "checksum": "VARCHAR(64)",
-        "source_updated_at": "TIMESTAMP" if dialect == "postgresql" else "DATETIME",
-    }
-    with engine.begin() as conn:
-        for column, ddl in additions.items():
-            if column not in existing:
-                conn.execute(text(f"ALTER TABLE wanted_records ADD COLUMN {column} {ddl}"))
-        conn.execute(text("UPDATE wanted_records SET status='active' WHERE status IS NULL"))
-    Base.metadata.create_all(bind=engine)
-
-ensure_wanted_schema()
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "./data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -362,7 +343,12 @@ def readiness():
         raise HTTPException(status_code=503, detail=f"database unavailable: {exc.__class__.__name__}")
 
 @app.get("/metrics", include_in_schema=False)
-def metrics():
+def metrics(request: Request):
+    if os.getenv("APP_ENV", "development") == "production":
+        expected = os.getenv("METRICS_TOKEN", "")
+        supplied = request.headers.get("X-Metrics-Token", "")
+        if not expected or not hmac.compare_digest(supplied, expected):
+            raise HTTPException(status_code=404, detail="not found")
     return metrics_response()
 
 @app.post("/auth/pi/verify", response_model=AuthOut)
