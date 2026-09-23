@@ -92,6 +92,10 @@ app.middleware("http")(metrics_middleware)
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
+    # Pi's domain verifier is strict and should receive a minimal plain-text
+    # response without browser-only framing or resource-policy headers.
+    if request.url.path == "/validation-key.txt":
+        return response
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -352,12 +356,13 @@ async def start_wanted_auto_sync():
 
 @app.get("/validation-key.txt", include_in_schema=False)
 def pi_domain_validation_key():
-    # Pi validates the response body byte-for-byte. Keep this ASCII-only,
-    # without a BOM, JSON quoting, HTML fallback, or trailing newline.
+    # Exactly 40 ASCII bytes. Do not add BOM, quotes, HTML or a newline.
     return Response(
-        content="daf9e8ccfb57f1861b9d986fc6c8b9aec8ae95",
-        media_type="text/plain",
-        headers={"Cache-Control": "no-store"},
+        content=b"daf9e8ccfb57f1861b9d986fc6c8b9aec8ae95",
+        headers={
+            "Content-Type": "text/plain",
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
     )
 
 
