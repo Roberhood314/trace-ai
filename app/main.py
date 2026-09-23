@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import hmac
+import re
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -30,7 +31,7 @@ from .schemas import (
     UserOut, UserRoleUpdate,
     WantedRecordOut, WantedSyncOut,
 )
-from .security import CurrentUser, Role, issue_token, require_role
+from .security import CurrentUser, Role, get_current_user, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 from .observability import JOB_QUEUE_DEPTH, metrics_middleware, metrics_response
@@ -129,6 +130,67 @@ async def rate_limit(request, call_next):
 
 class PiVerifyRequest(BaseModel):
     access_token: str
+
+class PiPaymentRequest(BaseModel):
+    payment_id: str
+    txid: str | None = None
+
+def _payment_enabled():
+    if os.getenv("PI_TEST_PAYMENT_ENABLED", "false").lower() != "true" or not os.getenv("PI_API_KEY"):
+        raise HTTPException(status_code=503, detail="Pi test payments are not configured")
+
+async def _pi_payment(method: str, path: str, body: dict | None = None):
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            response = await client.request(method, f"https://api.minepi.com/v2/payments/{path}",
+                headers={"Authorization": f"Key {os.environ['PI_API_KEY']}"}, json=body)
+            response.raise_for_status()
+            return response.json()
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(status_code=502, detail="Pi payment service unavailable") from None
+
+def _check_test_payment(payment: dict, user: CurrentUser):
+    metadata = payment.get("metadata") or {}
+    if (payment.get("user_uid") != user.uid or payment.get("direction") != "user_to_app"
+        or payment.get("network") != "Pi Testnet"
+        or not isinstance(metadata, dict) or metadata.get("purpose") != "trace_ai_test"
+        or payment.get("amount") != 0.01):
+        raise HTTPException(status_code=403, detail="payment does not match test purchase")
+    if payment.get("status", {}).get("cancelled") or payment.get("status", {}).get("user_cancelled"):
+        raise HTTPException(status_code=409, detail="payment cancelled")
+
+@app.get("/pi/test-payment/config")
+def test_payment_config():
+    return {"enabled": os.getenv("PI_TEST_PAYMENT_ENABLED", "false").lower() == "true" and bool(os.getenv("PI_API_KEY"))}
+
+@app.post("/pi/test-payment/approve")
+async def approve_test_payment(payload: PiPaymentRequest, user: CurrentUser = Depends(get_current_user)):
+    _payment_enabled()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", payload.payment_id):
+        raise HTTPException(status_code=400, detail="invalid payment id")
+    payment = await _pi_payment("GET", payload.payment_id)
+    _check_test_payment(payment, user)
+    if payment.get("status", {}).get("developer_approved"):
+        return {"status": "approved"}
+    await _pi_payment("POST", f"{payload.payment_id}/approve", {})
+    return {"status": "approved"}
+
+@app.post("/pi/test-payment/complete")
+async def complete_test_payment(payload: PiPaymentRequest, user: CurrentUser = Depends(get_current_user)):
+    _payment_enabled()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", payload.payment_id) or not re.fullmatch(r"[A-Za-z0-9]{1,128}", payload.txid or ""):
+        raise HTTPException(status_code=400, detail="invalid payment data")
+    payment = await _pi_payment("GET", payload.payment_id)
+    _check_test_payment(payment, user)
+    transaction = payment.get("transaction") or {}
+    if transaction.get("txid") != payload.txid or not transaction.get("verified") or not payment.get("status", {}).get("transaction_verified"):
+        raise HTTPException(status_code=409, detail="transaction not verified by Pi")
+    if payment.get("status", {}).get("developer_completed"):
+        return {"status": "completed"}
+    completed = await _pi_payment("POST", f"{payload.payment_id}/complete", {"txid": payload.txid})
+    if not completed.get("status", {}).get("developer_completed"):
+        raise HTTPException(status_code=502, detail="Pi has not completed payment")
+    return {"status": "completed"}
 
 def add_audit(db: Session, user: CurrentUser, action: str, resource_type: str, resource_id=None, detail=None):
     previous = db.scalar(select(AuditEvent).where(AuditEvent.event_hash.is_not(None)).order_by(AuditEvent.id.desc()))
