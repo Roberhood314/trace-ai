@@ -356,9 +356,9 @@ async def start_wanted_auto_sync():
 
 @app.get("/validation-key.txt", include_in_schema=False)
 def pi_domain_validation_key():
-    # Exactly 40 ASCII bytes. Do not add BOM, quotes, HTML or a newline.
+    # Return the Pi Developer Portal validation key exactly, without a BOM or newline.
     return Response(
-        content=b"daf9e8ccfb57f1861b9d986fc6c8b9aec8ae95",
+        content=b"daf9e8ccfb57f1861b9d986fc6c8b9aec8ae95d01766627062dc5ad131206304034979f296a1e9c36b374f9e5a3f3b80a95e905dc09af21b3b883ca26f9bda7e",
         headers={
             "Content-Type": "text/plain",
             "Cache-Control": "no-store, no-cache, must-revalidate",
