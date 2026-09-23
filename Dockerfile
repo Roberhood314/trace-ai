@@ -3,7 +3,7 @@ WORKDIR /web
 COPY web/package*.json ./
 RUN npm install
 COPY web ./
-ENV VITE_PI_SANDBOX=true
+ENV VITE_PI_SANDBOX=false
 RUN npm run build
 
 FROM python:3.12-slim
