@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from fastapi import Request
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 
 HTTP_REQUESTS = Counter(
@@ -16,6 +16,10 @@ HTTP_LATENCY = Histogram(
     "HTTP request latency in seconds",
     ["method", "route"],
     buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+)
+JOB_QUEUE_DEPTH = Gauge(
+    "trace_ai_job_queue_depth",
+    "Number of queued operational jobs waiting for processing",
 )
 
 
