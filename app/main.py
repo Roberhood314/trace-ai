@@ -350,6 +350,17 @@ async def start_wanted_auto_sync():
         asyncio.create_task(_system_sync_wanted())
 
 
+@app.get("/validation-key.txt", include_in_schema=False)
+def pi_domain_validation_key():
+    # Pi validates the response body byte-for-byte. Keep this ASCII-only,
+    # without a BOM, JSON quoting, HTML fallback, or trailing newline.
+    return Response(
+        content="daf9e8ccfb57f1861b9d986fc6c8b9aec8ae95",
+        media_type="text/plain",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "trace-ai", "version": "1.5.0-rc2"}
