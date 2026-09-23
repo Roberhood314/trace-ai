@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select, text
@@ -89,6 +89,17 @@ app.add_middleware(
 )
 
 app.middleware("http")(metrics_middleware)
+
+@app.middleware("http")
+async def pi_browser_custom_domain_bridge(request, call_next):
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if host == "tracevnid.fyi" and request.method == "GET" and request.url.path == "/":
+        return RedirectResponse(
+            url="https://trace-ai-production-b702.up.railway.app/",
+            status_code=302,
+            headers={"Cache-Control": "no-store"},
+        )
+    return await call_next(request)
 
 @app.middleware("http")
 async def security_headers(request, call_next):
