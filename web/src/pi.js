@@ -1,5 +1,21 @@
 import { approveTestPayment, completeTestPayment, setSessionToken, verifyPiAccessToken } from "./api";
 
+let piSdkPromise;
+
+export function loadPiSdk() {
+  if (window.Pi) return Promise.resolve(initPi());
+  if (piSdkPromise) return piSdkPromise;
+  piSdkPromise = new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = "https://sdk.minepi.com/pi-sdk.js";
+    script.async = true;
+    script.onload = () => resolve(initPi());
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
+  return piSdkPromise;
+}
+
 export function initPi() {
   if (!window.Pi) return false;
   try {
