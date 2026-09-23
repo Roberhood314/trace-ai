@@ -574,6 +574,20 @@ def pi_checkout_script():
 })();"""
     return Response(script, media_type="application/javascript", headers={"Cache-Control":"no-store"})
 
+@app.get("/privacy", include_in_schema=False)
+def privacy_alias():
+    path = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist")) / "privacy.html"
+    if path.exists():
+        return FileResponse(path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="privacy policy not found")
+
+@app.get("/terms", include_in_schema=False)
+def terms_alias():
+    path = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist")) / "terms.html"
+    if path.exists():
+        return FileResponse(path, media_type="text/html")
+    raise HTTPException(status_code=404, detail="terms of service not found")
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "trace-ai", "version": "1.5.0-rc2"}
