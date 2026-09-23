@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   UserRoundSearch
 } from "lucide-react";
-import { authenticatePi, initPi } from "./pi";
+import { authenticatePi, initPi, startTestPayment } from "./pi";
 import MapPanel from "./MapPanel";
 import CreateCaseModal from "./CreateCaseModal";
 import PersonPanel from "./PersonPanel";
@@ -23,7 +23,7 @@ import AIAnalysisPanel from "./AIAnalysisPanel";
 import AuditPanel from "./AuditPanel";
 import AdminPanel from "./AdminPanel";
 import WantedRadarPanel from "./WantedRadarPanel";
-import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones } from "./api";
+import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, testPaymentConfig } from "./api";
 import { demoCases, demoZones } from "./demoData";
 
 function Badge({ children, tone = "neutral" }) {
@@ -47,6 +47,8 @@ export default function App() {
   const [activeCase, setActiveCase] = useState(demoCases[0]);
   const [tab, setTab] = useState("overview");
   const [piReady, setPiReady] = useState(false);
+  const [paymentEnabled, setPaymentEnabled] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [liveCases, setLiveCases] = useState([]);
   const [person, setPerson] = useState(null);
@@ -56,6 +58,7 @@ export default function App() {
 
   useEffect(() => {
     setPiReady(initPi());
+    testPaymentConfig().then(({ enabled }) => setPaymentEnabled(enabled)).catch(() => {});
     loadCases().catch(() => {});
   }, []);
 
@@ -119,6 +122,17 @@ export default function App() {
           <span>{user ? `${user.username || "Pi User"} · ${user.role || ""}` : piReady ? "Đăng nhập Pi" : "Demo"}</span>
         </button>
       </header>
+
+      {paymentEnabled && piReady && user?.verified && (
+        <section style={{ padding: "12px 20px" }}>
+          <button type="button" onClick={() => {
+            setPaymentStatus("Đang mở ví Pi...");
+            try { startTestPayment(setPaymentStatus); }
+            catch (error) { setPaymentStatus(error.message); }
+          }}>Thử thanh toán 0,01 Pi (Testnet)</button>
+          <p role="status">{paymentStatus}</p>
+        </section>
+      )}
 
       <main>
         <section className="hero">

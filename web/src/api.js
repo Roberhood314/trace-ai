@@ -35,6 +35,14 @@ export async function verifyPiAccessToken(accessToken) {
   return result;
 }
 
+export async function testPaymentConfig() { return request("/pi/test-payment/config"); }
+export async function approveTestPayment(paymentId) {
+  return request("/pi/test-payment/approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_id: paymentId }) });
+}
+export async function completeTestPayment(paymentId, txid) {
+  return request("/pi/test-payment/complete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_id: paymentId, txid }) });
+}
+
 export async function createCase(payload) {
   return request("/cases", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 }
