@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   UserRoundSearch
 } from "lucide-react";
-import { authenticatePi, initPi, startTestPayment } from "./pi";
+import { authenticatePi, loadPiSdk, startTestPayment } from "./pi";
 import MapPanel from "./MapPanel";
 import CreateCaseModal from "./CreateCaseModal";
 import PersonPanel from "./PersonPanel";
@@ -57,7 +57,7 @@ export default function App() {
   const [evidence, setEvidence] = useState([]);
 
   useEffect(() => {
-    setPiReady(initPi());
+    loadPiSdk().then(setPiReady);
     testPaymentConfig().then(({ enabled }) => setPaymentEnabled(enabled)).catch(() => {});
     loadCases().catch(() => {});
   }, []);
