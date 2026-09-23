@@ -46,3 +46,6 @@ VITE_PI_SANDBOX=false
 
 ## Intentionally excluded
 TRACE-AI does not implement ambient IP/GPS scanning of nearby users, unauthorized telecom/customer-data access, unrestricted public-camera ingestion, or phone-based thermal/fingerprint forensics.
+# Pi Testnet payment checklist
+
+The optional checklist payment is a 0.01 Pi Testnet transaction with no purchase or service entitlement. It is disabled by default. Set `PI_TEST_PAYMENT_ENABLED=true` and set `PI_API_KEY` as a server-side environment variable in Railway. Never set the API key in Vite variables or commit it to git. The backend rejects payments on any network other than Pi Testnet, verifies the user's Pi UID, fixed amount, purpose, direction and verified transaction before approving or completing. Log in from Pi Browser, tap "Thử thanh toán 0,01 Pi (Testnet)", and approve the test transaction in your own Pi wallet. The app cannot make this payment on the user's behalf. Turn the toggle off again after checklist verification. A real product payment needs a separate order model and fulfillment policy.
