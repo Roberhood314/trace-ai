@@ -3,7 +3,7 @@
 TRACE-AI là web app hỗ trợ quản lý vụ việc tìm kiếm/người mất tích, timeline dấu vết, bản đồ vùng tìm kiếm, chứng cứ và phân tích hỗ trợ. Frontend được thiết kế mobile-first cho Pi Browser/Pi App Studio; backend FastAPI đảm nhiệm xác thực, dữ liệu và audit.
 
 ## Release
-- Version: `1.1.0-rc1`
+- Version: `1.5.0-rc2`
 - Frontend: React + Vite + Leaflet + Pi SDK
 - Backend: FastAPI + SQLAlchemy
 - Dev DB: SQLite
