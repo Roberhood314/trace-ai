@@ -253,3 +253,9 @@ def test_uas_user_simulation_mode():
     assert stopped.status_code == 200, stopped.text
     after = client.get("/uas/tracks?include_simulation=true", headers=ANALYST)
     assert all(not x.get("simulation") for x in after.json()["items"])
+
+
+def test_public_wanted_image_allows_cross_origin_embedding():
+    response = client.get("/public/wanted/999999/thumbnail")
+    assert response.status_code == 404
+    assert response.headers.get("cross-origin-resource-policy") == "cross-origin"
