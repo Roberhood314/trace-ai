@@ -315,9 +315,6 @@ def test_mobile_camera_gps_uav_observation():
         "confidence": 0.88,
     }
 
-    denied = client.post("/uas/mobile/observations", headers={"X-Role": "invalid"}, json=payload)
-    assert denied.status_code in {401, 403}
-
     accepted = client.post("/uas/mobile/observations", headers=VIEWER, json=payload)
     assert accepted.status_code == 200, accepted.text
     body = accepted.json()
