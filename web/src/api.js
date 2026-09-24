@@ -95,3 +95,22 @@ export async function fetchWantedSourceStatus() {
 export async function syncWanted(pages = 3) {
   return request(`/wanted/sync?pages=${pages}`, { method: "POST" });
 }
+
+
+export async function fetchFusionStatus() { return request("/fusion/status"); }
+export async function fetchFusionTracks(limit = 100) { return request(`/fusion/tracks?limit=${limit}`); }
+export async function fetchFusionTrajectory(trackId, limit = 200) { return request(`/fusion/tracks/${trackId}/trajectory?limit=${limit}`); }
+export async function reviewFusionTrack(trackId, decision, note = "") {
+  return request(`/fusion/tracks/${trackId}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision, note }),
+  });
+}
+export async function createFusionGeofence(payload) {
+  return request("/fusion/geofences", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
