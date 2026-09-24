@@ -29,7 +29,7 @@ except Exception:  # Redis remains optional for local/dev fallback.
     redis_async = None
 
 from .database import SessionLocal, engine, get_db
-from .models import AuditEvent, Case, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
+from .models import AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -248,6 +248,16 @@ class PiVerifyRequest(BaseModel):
 class PiPaymentRequest(BaseModel):
     payment_id: str
     txid: str | None = None
+
+class DeviceRegisterRequest(BaseModel):
+    name: str
+    integration_id: str
+    platform: str
+    capabilities: list[str] = []
+
+class DeviceUpdateRequest(BaseModel):
+    is_active: bool
+
 
 class WantedPageOut(BaseModel):
     items: list[WantedRecordOut]
@@ -546,6 +556,123 @@ async def start_realtime_listener():
 
 
 
+
+def _hash_device_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+def _device_auth(request: Request, db: Session) -> ConnectorDevice:
+    device_id = request.headers.get("X-TRACE-Device-ID", "").strip()
+    authorization = request.headers.get("Authorization", "").strip()
+    if not device_id or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="device authentication required")
+    token = authorization.split(" ", 1)[1].strip()
+    if len(token) < 24:
+        raise HTTPException(status_code=401, detail="invalid device credential")
+    row = db.scalar(select(ConnectorDevice).where(ConnectorDevice.device_id == device_id))
+    if not row or not row.is_active:
+        raise HTTPException(status_code=403, detail="device disabled or unknown")
+    if not hmac.compare_digest(row.token_hash, _hash_device_token(token)):
+        raise HTTPException(status_code=401, detail="invalid device credential")
+    row.last_seen_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    return row
+
+@app.post("/devices/register")
+def register_device(
+    payload: DeviceRegisterRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.ADMIN)),
+):
+    integration_id = payload.integration_id.strip().lower()
+    platform = payload.platform.strip().lower()
+    if integration_id not in {"vision", "geo", "air", "satellite", "mobility", "iot", "fusion"}:
+        raise HTTPException(status_code=422, detail="unsupported integration")
+    if platform not in {"windows", "linux", "macos", "android", "ios", "gateway", "embedded"}:
+        raise HTTPException(status_code=422, detail="unsupported platform")
+    device_id = f"dev_{uuid.uuid4().hex[:20]}"
+    token = secrets.token_urlsafe(32)
+    row = ConnectorDevice(
+        device_id=device_id,
+        name=payload.name.strip()[:255] or device_id,
+        integration_id=integration_id,
+        platform=platform,
+        token_hash=_hash_device_token(token),
+        capabilities_json=json.dumps(payload.capabilities[:32], ensure_ascii=False),
+        is_active=True,
+        created_by=user.uid,
+    )
+    db.add(row)
+    add_audit(db, user, "device_register", "connector_device", device_id, f"integration={integration_id};platform={platform}")
+    db.commit()
+    return {
+        "device_id": device_id,
+        "device_token": token,
+        "integration_id": integration_id,
+        "platform": platform,
+        "note": "Store this token securely; it is only returned at registration.",
+    }
+
+@app.get("/devices")
+def list_devices(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    rows = list(db.scalars(select(ConnectorDevice).order_by(ConnectorDevice.created_at.desc())).all())
+    return [{
+        "device_id": row.device_id,
+        "name": row.name,
+        "integration_id": row.integration_id,
+        "platform": row.platform,
+        "capabilities": json.loads(row.capabilities_json or "[]"),
+        "is_active": row.is_active,
+        "created_at": row.created_at,
+        "last_seen_at": row.last_seen_at,
+    } for row in rows]
+
+@app.patch("/devices/{device_id}")
+def update_device(
+    device_id: str,
+    payload: DeviceUpdateRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.ADMIN)),
+):
+    row = db.scalar(select(ConnectorDevice).where(ConnectorDevice.device_id == device_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="device not found")
+    row.is_active = payload.is_active
+    add_audit(db, user, "device_enable" if payload.is_active else "device_disable", "connector_device", device_id)
+    db.commit()
+    return {"device_id": device_id, "is_active": row.is_active}
+
+@app.post("/device/heartbeat")
+def device_heartbeat(
+    payload: ConnectorHeartbeat,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    row = _device_auth(request, db)
+    if payload.device_id != row.device_id:
+        raise HTTPException(status_code=403, detail="device identity mismatch")
+    if payload.platform != row.platform:
+        raise HTTPException(status_code=403, detail="device platform mismatch")
+    return ingest_heartbeat(row.integration_id, payload)
+
+@app.post("/device/uas/events")
+def device_uas_ingest(
+    payload: UASEvent,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    row = _device_auth(request, db)
+    if row.integration_id != "air":
+        raise HTTPException(status_code=403, detail="device is not authorized for UAS ingestion")
+    capabilities = set(json.loads(row.capabilities_json or "[]"))
+    if capabilities and payload.source not in capabilities:
+        raise HTTPException(status_code=403, detail="UAS source not allowed for this device")
+    event = ingest_uas_event(payload)
+    event["device_id"] = row.device_id
+    event["platform"] = row.platform
+    return event
 
 def _require_gateway_key(request: Request):
     expected = os.getenv("TRACE_GATEWAY_KEY", "").strip()
