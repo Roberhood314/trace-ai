@@ -132,3 +132,54 @@ def test_integration_health_and_uas_gateway(monkeypatch):
     tracks = client.get("/uas/tracks", headers=ANALYST)
     assert tracks.status_code == 200
     assert tracks.json()["items"][0]["track_id"] == "test-uav-1"
+
+
+def test_device_pairing_and_uas_ingestion():
+    registered = client.post("/devices/register", headers=ADMIN, json={
+        "name": "Test Remote ID Receiver",
+        "integration_id": "air",
+        "platform": "gateway",
+        "capabilities": ["remote_id", "radar"],
+    })
+    assert registered.status_code == 200, registered.text
+    device = registered.json()
+    assert device["device_id"].startswith("dev_")
+    assert len(device["device_token"]) >= 24
+
+    auth = {
+        "Authorization": f"Bearer {device['device_token']}",
+        "X-TRACE-Device-ID": device["device_id"],
+    }
+    heartbeat = client.post("/device/heartbeat", headers=auth, json={
+        "device_id": device["device_id"],
+        "platform": "gateway",
+        "version": "1.0",
+        "capabilities": ["remote_id", "radar"],
+    })
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    event = client.post("/device/uas/events", headers=auth, json={
+        "track_id": "uas-device-test",
+        "source": "remote_id",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "latitude": 10.8,
+        "longitude": 106.7,
+        "altitude_m": 100,
+        "speed_mps": 10,
+        "heading_deg": 180,
+        "classification": "uav",
+        "sensor_confidence": 0.9,
+        "classification_confidence": 0.8,
+    })
+    assert event.status_code == 200, event.text
+    assert event.json()["device_id"] == device["device_id"]
+
+    forbidden = client.post("/device/uas/events", headers=auth, json={
+        "track_id": "uas-device-test-2",
+        "source": "thermal",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "classification": "unknown",
+        "sensor_confidence": 0.5,
+        "classification_confidence": 0.5,
+    })
+    assert forbidden.status_code == 403
