@@ -23,6 +23,7 @@ INTEGRATIONS = {
 UAS_LAST_EVENT_AT: datetime | None = None
 UAS_TRACKS: dict[str, dict] = {}
 DEVICE_HEARTBEATS: dict[tuple[str, str], dict] = {}
+SIM_UAS_TRACKS: dict[str, dict] = {}
 
 class UASEvent(BaseModel):
     track_id: str = Field(min_length=1, max_length=128)
@@ -152,6 +153,23 @@ def ingest_uas_event(event: UASEvent):
             UAS_TRACKS.pop(key, None)
     return UAS_TRACKS[event.track_id]
 
-def recent_uas_tracks(limit: int = 100):
-    rows = sorted(UAS_TRACKS.values(), key=lambda x: x.get("received_at", ""), reverse=True)
+def set_simulated_uas_track(track_id: str, payload: dict):
+    item = dict(payload)
+    item["track_id"] = track_id
+    item["simulation"] = True
+    item["status"] = "simulation"
+    item["received_at"] = datetime.now(timezone.utc).isoformat()
+    SIM_UAS_TRACKS[track_id] = item
+    return item
+
+def clear_simulated_uas_tracks():
+    count = len(SIM_UAS_TRACKS)
+    SIM_UAS_TRACKS.clear()
+    return count
+
+def recent_uas_tracks(limit: int = 100, include_simulation: bool = False):
+    rows = list(UAS_TRACKS.values())
+    if include_simulation:
+        rows += list(SIM_UAS_TRACKS.values())
+    rows = sorted(rows, key=lambda x: x.get("received_at", ""), reverse=True)
     return rows[: max(1, min(limit, 500))]
