@@ -132,3 +132,15 @@ def test_integration_health_and_uas_gateway(monkeypatch):
     tracks = client.get("/uas/tracks", headers=ANALYST)
     assert tracks.status_code == 200
     assert tracks.json()["items"][0]["track_id"] == "test-uav-1"
+
+
+def test_province_reorganization_mapping():
+    from app.main import _province_from_address
+    assert _province_from_address("TP. Tân An, Long An") == "Tây Ninh"
+    assert _province_from_address("TP. Thủ Dầu Một, Bình Dương") == "TP. Hồ Chí Minh"
+    assert _province_from_address("TP. Vũng Tàu, Bà Rịa - Vũng Tàu") == "TP. Hồ Chí Minh"
+    assert _province_from_address("TP. Đồng Xoài, Bình Phước") == "Đồng Nai"
+    assert _province_from_address("TP. Nam Định, Nam Định") == "Ninh Bình"
+    assert _province_from_address("TP. Bắc Giang, Bắc Giang") == "Bắc Ninh"
+    assert _province_from_address("TP. Hà Giang, Hà Giang") == "Tuyên Quang"
+    assert _province_from_address("TP. Huế, Thừa Thiên Huế") == "Huế"
