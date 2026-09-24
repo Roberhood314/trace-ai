@@ -195,3 +195,24 @@ def test_province_reorganization_mapping():
     assert _province_from_address("TP. Bắc Giang, Bắc Giang") == "Bắc Ninh"
     assert _province_from_address("TP. Hà Giang, Hà Giang") == "Tuyên Quang"
     assert _province_from_address("TP. Huế, Thừa Thiên Huế") == "Huế"
+
+
+def test_pi_auth_cors_preflight():
+    headers = {
+        "Origin": "https://traceai12345.pinet.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    }
+    response = client.options("/auth/pi/verify", headers=headers)
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://traceai12345.pinet.com"
+    assert "POST" in response.headers.get("access-control-allow-methods", "")
+
+def test_pi_auth_cors_rejects_unknown_origin():
+    headers = {
+        "Origin": "https://example.invalid",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    }
+    response = client.options("/auth/pi/verify", headers=headers)
+    assert response.status_code == 400
