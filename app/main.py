@@ -198,7 +198,7 @@ for origin in ("https://tracevnid.fyi", "https://www.tracevnid.fyi"):
         allowed_origins.append(origin)
 
 configured_origin_regex = os.getenv("CORS_ORIGIN_REGEX", "").strip()
-pi_browser_origin_regex = r"https://([a-z0-9-]+\\.)*(pinet\\.com|minepi\\.com)"
+pi_browser_origin_regex = r"https://([a-z0-9-]+\.)*(pinet\.com|minepi\.com)"
 origin_regex = (
     f"(?:{configured_origin_regex})|(?:{pi_browser_origin_regex})"
     if configured_origin_regex
