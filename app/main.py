@@ -45,7 +45,7 @@ from .services.gateway import public_gateway_signals, public_gateway_status, res
 from .observability import JOB_QUEUE_DEPTH, metrics_middleware, metrics_response
 from .job_queue import enqueue_job
 from .rate_limit import enforce as enforce_rate_limit
-from .integrations import UASEvent, ingest_uas_event, integration_status, recent_uas_tracks
+from .integrations import ConnectorHeartbeat, UASEvent, ingest_heartbeat, ingest_uas_event, integration_status, recent_uas_tracks
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -556,8 +556,16 @@ def _require_gateway_key(request: Request):
         raise HTTPException(status_code=401, detail="invalid gateway credential")
 
 @app.get("/public/integrations/status")
-def public_integrations_status():
-    return integration_status()
+async def public_integrations_status():
+    return await integration_status()
+
+@app.post("/integrations/{integration_id}/heartbeat")
+def connector_heartbeat(integration_id: str, payload: ConnectorHeartbeat, request: Request):
+    _require_gateway_key(request)
+    try:
+        return ingest_heartbeat(integration_id, payload)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="unknown integration") from None
 
 @app.post("/integrations/uas/events")
 def uas_ingest_event(payload: UASEvent, request: Request):
@@ -576,8 +584,8 @@ def uas_tracks(
     }
 
 @app.get("/uas/status")
-def uas_status(user: CurrentUser = Depends(require_role(Role.VIEWER))):
-    air = next(x for x in integration_status() if x["id"] == "air")
+async def uas_status(user: CurrentUser = Depends(require_role(Role.VIEWER))):
+    air = next(x for x in await integration_status() if x["id"] == "air")
     return air
 
 @app.get("/validation-key.txt", include_in_schema=False)
