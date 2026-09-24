@@ -155,3 +155,79 @@ class ConnectorDevice(Base):
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class UASObservation(Base):
+    __tablename__ = "uas_observations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    observation_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    source_track_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    altitude_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    speed_mps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heading_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    observer_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    observer_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    observer_heading_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    classification: Mapped[str] = mapped_column(String(32), default="unknown", index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+class UASTrack(Base):
+    __tablename__ = "uas_tracks_core"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    classification: Mapped[str] = mapped_column(String(32), default="unknown", index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    altitude_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    speed_mps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heading_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_count: Mapped[int] = mapped_column(default=0)
+    sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    geofence_state: Mapped[str] = mapped_column(String(24), default="clear", index=True)
+    review_status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    version: Mapped[int] = mapped_column(default=1)
+
+class UASTrackPoint(Base):
+    __tablename__ = "uas_track_points"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("uas_tracks_core.id"), index=True)
+    observation_id: Mapped[int | None] = mapped_column(ForeignKey("uas_observations.id"), nullable=True, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    altitude_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    speed_mps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heading_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+
+class UASGeofence(Base):
+    __tablename__ = "uas_geofences"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    center_latitude: Mapped[float] = mapped_column(Float)
+    center_longitude: Mapped[float] = mapped_column(Float)
+    radius_m: Mapped[float] = mapped_column(Float)
+    severity: Mapped[str] = mapped_column(String(16), default="warning")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+class UASReview(Base):
+    __tablename__ = "uas_reviews"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("uas_tracks_core.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(24), index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewer_uid: Mapped[str] = mapped_column(String(128), index=True)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
