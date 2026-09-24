@@ -97,6 +97,6 @@ jobs:
           engine = create_engine(url)
           with engine.connect() as conn:
               assert conn.execute(text("SELECT count(*) FROM cases WHERE case_code='BACKUP-RESTORE-SENTINEL'")).scalar_one() == 1
-              assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004_wanted_performance"
+              assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005_connector_devices"
               print("backup_restore_ok")
           PY
