@@ -12,33 +12,57 @@ down_revision = "0004_wanted_performance"
 branch_labels = None
 depends_on = None
 
+def _index_names(inspector):
+    if "connector_devices" not in inspector.get_table_names():
+        return set()
+    return {x["name"] for x in inspector.get_indexes("connector_devices") if x.get("name")}
+
 def upgrade():
-    op.create_table(
-        "connector_devices",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("device_id", sa.String(length=128), nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("integration_id", sa.String(length=32), nullable=False),
-        sa.Column("platform", sa.String(length=32), nullable=False),
-        sa.Column("token_hash", sa.String(length=64), nullable=False),
-        sa.Column("capabilities_json", sa.Text(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("created_by", sa.String(length=128), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("last_seen_at", sa.DateTime(), nullable=True),
-    )
-    op.create_index("ix_connector_devices_device_id", "connector_devices", ["device_id"], unique=True)
-    op.create_index("ix_connector_devices_integration_id", "connector_devices", ["integration_id"])
-    op.create_index("ix_connector_devices_token_hash", "connector_devices", ["token_hash"], unique=True)
-    op.create_index("ix_connector_devices_is_active", "connector_devices", ["is_active"])
-    op.create_index("ix_connector_devices_created_at", "connector_devices", ["created_at"])
-    op.create_index("ix_connector_devices_last_seen_at", "connector_devices", ["last_seen_at"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "connector_devices" not in inspector.get_table_names():
+        op.create_table(
+            "connector_devices",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("device_id", sa.String(length=128), nullable=False),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("integration_id", sa.String(length=32), nullable=False),
+            sa.Column("platform", sa.String(length=32), nullable=False),
+            sa.Column("token_hash", sa.String(length=64), nullable=False),
+            sa.Column("capabilities_json", sa.Text(), nullable=True),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+            sa.Column("created_by", sa.String(length=128), nullable=True),
+            sa.Column("created_at", sa.DateTime(), nullable=False),
+            sa.Column("last_seen_at", sa.DateTime(), nullable=True),
+        )
+        inspector = sa.inspect(bind)
+    existing = _index_names(inspector)
+    desired = {
+        "ix_connector_devices_device_id": (["device_id"], True),
+        "ix_connector_devices_integration_id": (["integration_id"], False),
+        "ix_connector_devices_token_hash": (["token_hash"], True),
+        "ix_connector_devices_is_active": (["is_active"], False),
+        "ix_connector_devices_created_at": (["created_at"], False),
+        "ix_connector_devices_last_seen_at": (["last_seen_at"], False),
+    }
+    for name, (cols, unique) in desired.items():
+        if name not in existing:
+            op.create_index(name, "connector_devices", cols, unique=unique)
 
 def downgrade():
-    op.drop_index("ix_connector_devices_last_seen_at", table_name="connector_devices")
-    op.drop_index("ix_connector_devices_created_at", table_name="connector_devices")
-    op.drop_index("ix_connector_devices_is_active", table_name="connector_devices")
-    op.drop_index("ix_connector_devices_token_hash", table_name="connector_devices")
-    op.drop_index("ix_connector_devices_integration_id", table_name="connector_devices")
-    op.drop_index("ix_connector_devices_device_id", table_name="connector_devices")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "connector_devices" not in inspector.get_table_names():
+        return
+    existing = _index_names(inspector)
+    for name in [
+        "ix_connector_devices_last_seen_at",
+        "ix_connector_devices_created_at",
+        "ix_connector_devices_is_active",
+        "ix_connector_devices_token_hash",
+        "ix_connector_devices_integration_id",
+        "ix_connector_devices_device_id",
+    ]:
+        if name in existing:
+            op.drop_index(name, table_name="connector_devices")
     op.drop_table("connector_devices")
