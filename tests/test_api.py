@@ -86,3 +86,20 @@ def test_audit_events_are_hash_chained():
     with SessionLocal() as db:
         event = db.query(AuditEvent).order_by(AuditEvent.id.desc()).first()
         assert event and event.event_hash and len(event.event_hash) == 64
+
+
+def test_public_wanted_page_and_stats():
+    page = client.get("/public/wanted/page?limit=25&offset=0")
+    assert page.status_code == 200
+    body = page.json()
+    assert set(["items", "total", "limit", "offset", "has_more"]).issubset(body)
+    assert body["limit"] == 25
+    assert body["offset"] == 0
+    assert isinstance(body["items"], list)
+
+    stats = client.get("/public/wanted/stats/provinces")
+    assert stats.status_code == 200
+    data = stats.json()
+    assert "total" in data
+    assert "provinces" in data
+    assert isinstance(data["provinces"], list)
