@@ -4,9 +4,7 @@ import asyncio
 import json
 import os
 import hmac
-import io
 import re
-import unicodedata
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -16,17 +14,11 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from PIL import Image
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
-
-try:
-    import redis.asyncio as redis_async
-except Exception:  # Redis remains optional for local/dev fallback.
-    redis_async = None
 
 from .database import SessionLocal, engine, get_db
 from .models import AuditEvent, Case, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
@@ -64,113 +56,8 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 ALLOWED_MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"}
 
 IMAGE_FETCH_SEMAPHORE = asyncio.Semaphore(6)
-REDIS_URL = os.getenv("REDIS_URL", "").strip()
-CACHE_TTL_SECONDS = max(5, min(int(os.getenv("TRACE_CACHE_TTL_SECONDS", "30") or 30), 600))
-EVENT_CHANNEL = os.getenv("TRACE_EVENT_CHANNEL", "trace:events")
-_redis_client = None
-EVENT_SUBSCRIBERS: set[asyncio.Queue] = set()
-
-async def get_redis_client():
-    global _redis_client
-    if not REDIS_URL or redis_async is None:
-        return None
-    if _redis_client is None:
-        _redis_client = redis_async.from_url(
-            REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-            health_check_interval=30,
-        )
-    try:
-        await _redis_client.ping()
-        return _redis_client
-    except Exception:
-        return None
-
-async def cache_get_json(key: str):
-    client = await get_redis_client()
-    if client is None:
-        return None
-    try:
-        raw = await client.get(key)
-        return json.loads(raw) if raw else None
-    except Exception:
-        return None
-
-async def cache_set_json(key: str, value, ttl: int = CACHE_TTL_SECONDS):
-    client = await get_redis_client()
-    if client is None:
-        return
-    try:
-        await client.setex(key, ttl, json.dumps(value, ensure_ascii=False, default=str))
-    except Exception:
-        pass
-
-async def cache_delete_prefix(prefix: str):
-    client = await get_redis_client()
-    if client is None:
-        return
-    try:
-        async for key in client.scan_iter(match=f"{prefix}*"):
-            await client.delete(key)
-    except Exception:
-        pass
-
-async def publish_event(kind: str, payload: dict):
-    event = {
-        "type": kind,
-        "at": datetime.now(timezone.utc).isoformat(),
-        "payload": payload,
-    }
-    client = await get_redis_client()
-    if client is not None:
-        try:
-            await client.publish(EVENT_CHANNEL, json.dumps(event, ensure_ascii=False, default=str))
-            return
-        except Exception:
-            pass
-    dead = []
-    for queue in tuple(EVENT_SUBSCRIBERS):
-        try:
-            queue.put_nowait(event)
-        except Exception:
-            dead.append(queue)
-    for queue in dead:
-        EVENT_SUBSCRIBERS.discard(queue)
-
-async def redis_event_listener():
-    client = await get_redis_client()
-    if client is None:
-        return
-    pubsub = client.pubsub()
-    try:
-        await pubsub.subscribe(EVENT_CHANNEL)
-        while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if message and message.get("data"):
-                try:
-                    event = json.loads(message["data"])
-                except Exception:
-                    event = None
-                if isinstance(event, dict):
-                    dead = []
-                    for queue in tuple(EVENT_SUBSCRIBERS):
-                        try:
-                            queue.put_nowait(event)
-                        except Exception:
-                            dead.append(queue)
-                    for queue in dead:
-                        EVENT_SUBSCRIBERS.discard(queue)
-            await asyncio.sleep(0.05)
-    finally:
-        await pubsub.close()
-
 IMAGE_CACHE_MAX = max(16, min(int(os.getenv("WANTED_IMAGE_CACHE_ITEMS", "128") or 128), 512))
 IMAGE_CACHE: OrderedDict[int, tuple[str, bytes]] = OrderedDict()
-THUMB_CACHE_MAX = max(32, min(int(os.getenv("WANTED_THUMB_CACHE_ITEMS", "256") or 256), 1024))
-THUMB_CACHE: OrderedDict[int, bytes] = OrderedDict()
 WANTED_SYNC_LOCK = asyncio.Lock()
 WANTED_SYNC_STATE = {
     "running": False,
@@ -247,14 +134,6 @@ class PiVerifyRequest(BaseModel):
 class PiPaymentRequest(BaseModel):
     payment_id: str
     txid: str | None = None
-
-class WantedPageOut(BaseModel):
-    items: list[WantedRecordOut]
-    total: int
-    limit: int
-    offset: int
-    has_more: bool
-
 
 def _payment_enabled():
     if os.getenv("PI_TEST_PAYMENT_ENABLED", "false").lower() != "true" or not os.getenv("PI_API_KEY"):
@@ -490,8 +369,6 @@ async def _run_wanted_sync(full: bool, actor: str = "system"):
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "last_error": None,
             })
-            await cache_delete_prefix("wanted:")
-            await publish_event("wanted.sync.completed", totals)
             return totals
         except Exception as exc:
             WANTED_SYNC_STATE.update({
@@ -537,12 +414,6 @@ async def _system_sync_wanted():
 async def start_wanted_auto_sync():
     if int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "60") or 60) >= 30:
         asyncio.create_task(_system_sync_wanted())
-
-@app.on_event("startup")
-async def start_realtime_listener():
-    if REDIS_URL:
-        asyncio.create_task(redis_event_listener())
-
 
 
 @app.get("/validation-key.txt", include_in_schema=False)
@@ -1080,60 +951,6 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
         },
     )
 
-@app.get("/public/wanted/{wanted_id}/thumbnail")
-async def public_wanted_thumbnail(wanted_id: int, db: Session = Depends(get_db)):
-    cached = THUMB_CACHE.get(wanted_id)
-    if cached:
-        THUMB_CACHE.move_to_end(wanted_id)
-        return Response(
-            content=cached,
-            media_type="image/webp",
-            headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "memory-cache"},
-        )
-
-    client = await get_redis_client()
-    redis_key = f"wanted:thumb:{wanted_id}"
-    if client is not None:
-        try:
-            raw_client = redis_async.from_url(REDIS_URL, decode_responses=False, socket_connect_timeout=2, socket_timeout=2)
-            raw = await raw_client.get(redis_key)
-            await raw_client.aclose()
-            if raw:
-                THUMB_CACHE[wanted_id] = raw
-                return Response(content=raw, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "redis-cache"})
-        except Exception:
-            pass
-
-    image_response = await public_wanted_image(wanted_id, db)
-    try:
-        with Image.open(io.BytesIO(image_response.body)) as image:
-            image = image.convert("RGB")
-            image.thumbnail((180, 220), Image.Resampling.LANCZOS)
-            out = io.BytesIO()
-            image.save(out, format="WEBP", quality=78, method=4)
-            thumb = out.getvalue()
-    except Exception:
-        raise HTTPException(status_code=502, detail="thumbnail generation failed")
-
-    THUMB_CACHE[wanted_id] = thumb
-    THUMB_CACHE.move_to_end(wanted_id)
-    while len(THUMB_CACHE) > THUMB_CACHE_MAX:
-        THUMB_CACHE.popitem(last=False)
-
-    if REDIS_URL and redis_async is not None:
-        try:
-            raw_client = redis_async.from_url(REDIS_URL, decode_responses=False, socket_connect_timeout=2, socket_timeout=2)
-            await raw_client.setex(redis_key, 86400, thumb)
-            await raw_client.aclose()
-        except Exception:
-            pass
-
-    return Response(
-        content=thumb,
-        media_type="image/webp",
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "generated"},
-    )
-
 @app.get("/public/wanted/{wanted_id}/image-data")
 async def public_wanted_image_data(wanted_id: int, db: Session = Depends(get_db)):
     image_response = await public_wanted_image(wanted_id, db)
@@ -1145,45 +962,7 @@ async def public_wanted_image_data(wanted_id: int, db: Session = Depends(get_db)
         "source": "truyna.bocongan.gov.vn",
     }
 
-PROVINCE_LABELS = [
-    "TP. Hồ Chí Minh", "Hà Nội", "Hải Phòng", "Đà Nẵng", "Cần Thơ", "Huế",
-    "An Giang", "Bà Rịa - Vũng Tàu", "Bắc Giang", "Bắc Kạn", "Bạc Liêu", "Bắc Ninh", "Bến Tre",
-    "Bình Định", "Bình Dương", "Bình Phước", "Bình Thuận", "Cà Mau", "Cao Bằng", "Đắk Lắk",
-    "Đắk Nông", "Điện Biên", "Đồng Nai", "Đồng Tháp", "Gia Lai", "Hà Giang", "Hà Nam", "Hà Tĩnh",
-    "Hải Dương", "Hậu Giang", "Hòa Bình", "Hưng Yên", "Khánh Hòa", "Kiên Giang", "Kon Tum",
-    "Lai Châu", "Lâm Đồng", "Lạng Sơn", "Lào Cai", "Long An", "Nam Định", "Nghệ An", "Ninh Bình",
-    "Ninh Thuận", "Phú Thọ", "Phú Yên", "Quảng Bình", "Quảng Nam", "Quảng Ngãi", "Quảng Ninh",
-    "Quảng Trị", "Sóc Trăng", "Sơn La", "Tây Ninh", "Thái Bình", "Thái Nguyên", "Thanh Hóa",
-    "Thừa Thiên Huế", "Tiền Giang", "Trà Vinh", "Tuyên Quang", "Vĩnh Long", "Vĩnh Phúc", "Yên Bái",
-]
-
-def _fold_location(value: str) -> str:
-    normalized = unicodedata.normalize("NFD", value or "")
-    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").replace("đ", "d").replace("Đ", "D").lower()
-
-def _province_from_address(address: str | None) -> str:
-    if not address:
-        return "Chưa xác định"
-    folded = _fold_location(address)
-    aliases = [
-        ("tp.hcm", "TP. Hồ Chí Minh"), ("tp hcm", "TP. Hồ Chí Minh"), ("ho chi minh", "TP. Hồ Chí Minh"),
-        ("thua thien hue", "Thừa Thiên Huế"), ("ba ria - vung tau", "Bà Rịa - Vũng Tàu"),
-        ("ba ria vung tau", "Bà Rịa - Vũng Tàu"), ("dak lak", "Đắk Lắk"), ("dak nong", "Đắk Nông"),
-    ]
-    for needle, label in aliases:
-        if needle in folded:
-            return label
-    for label in sorted(PROVINCE_LABELS, key=len, reverse=True):
-        if _fold_location(label) in folded:
-            return label
-    parts = [part.strip() for part in address.split(",") if part.strip()]
-    if parts:
-        fallback = re.sub(r"^(tỉnh|thành phố|tp\.?)\s*", "", parts[-1], flags=re.I).strip()
-        if fallback:
-            return fallback
-    return "Chưa xác định"
-
-def _wanted_query(q: str | None, status: str | None, province: str | None = None):
+def _wanted_query(q: str | None, status: str | None):
     stmt = select(WantedRecord)
     if status in {"active", "dinh_na"}:
         stmt = stmt.where(WantedRecord.status == status)
@@ -1196,16 +975,6 @@ def _wanted_query(q: str | None, status: str | None, province: str | None = None
             WantedRecord.warrant_reference.ilike(term),
             WantedRecord.issuing_unit.ilike(term),
         ))
-    if province and province.strip():
-        label = province.strip()
-        terms = [label]
-        if label == "TP. Hồ Chí Minh":
-            terms += ["Hồ Chí Minh", "TP HCM", "TP.HCM"]
-        elif label == "Thừa Thiên Huế":
-            terms += ["Huế", "Thua Thien Hue"]
-        elif label == "Bà Rịa - Vũng Tàu":
-            terms += ["Bà Rịa Vũng Tàu", "Vũng Tàu"]
-        stmt = stmt.where(or_(*[WantedRecord.registered_address.ilike(f"%{term}%") for term in terms]))
     return stmt.order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
 
 
@@ -1231,105 +1000,6 @@ def _wanted_source_status(db: Session):
         "sync_progress": dict(WANTED_SYNC_STATE),
     }
 
-
-@app.get("/public/wanted/page", response_model=WantedPageOut)
-async def public_wanted_page(
-    response: Response,
-    q: str | None = None,
-    status: str | None = None,
-    province: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-    db: Session = Depends(get_db),
-):
-    limit = max(1, min(limit, 200))
-    offset = max(0, offset)
-    cache_key = f"wanted:page:{status or 'all'}:{province or 'all'}:{q or ''}:{limit}:{offset}"
-    cached = await cache_get_json(cache_key)
-    if cached is not None:
-        response.headers["X-TRACE-Cache"] = "HIT"
-        response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-        return cached
-
-    stmt = _wanted_query(q, status, province)
-    count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
-    total = int(db.scalar(count_stmt) or 0)
-    items = list(db.scalars(stmt.offset(offset).limit(limit)).all())
-    payload = {
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": offset + len(items) < total,
-    }
-    serializable = {
-        "items": [WantedRecordOut.model_validate(item).model_dump(mode="json") for item in items],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": payload["has_more"],
-    }
-    await cache_set_json(cache_key, serializable, ttl=20)
-    response.headers["X-TRACE-Cache"] = "MISS"
-    response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-    return payload
-
-@app.get("/public/wanted/stats/provinces")
-async def public_wanted_province_stats(response: Response, db: Session = Depends(get_db)):
-    cache_key = "wanted:stats:provinces"
-    cached = await cache_get_json(cache_key)
-    if cached is not None:
-        response.headers["X-TRACE-Cache"] = "HIT"
-        response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
-        return cached
-
-    addresses = list(db.scalars(select(WantedRecord.registered_address)).all())
-    counts: dict[str, int] = {}
-    for address in addresses:
-        label = _province_from_address(address)
-        counts[label] = counts.get(label, 0) + 1
-    provinces = [
-        {"name": name, "count": count}
-        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    ]
-    payload = {
-        "total": len(addresses),
-        "unknown": counts.get("Chưa xác định", 0),
-        "provinces": provinces,
-    }
-    await cache_set_json(cache_key, payload, ttl=120)
-    response.headers["X-TRACE-Cache"] = "MISS"
-    response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
-    return payload
-
-@app.get("/public/events")
-async def public_event_stream(request: Request):
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-    EVENT_SUBSCRIBERS.add(queue)
-
-    async def stream():
-        try:
-            yield "retry: 3000\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
-                    yield f"event: {event.get('type', 'message')}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            EVENT_SUBSCRIBERS.discard(queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 @app.get("/public/wanted", response_model=list[WantedRecordOut])
 def public_wanted_records(
