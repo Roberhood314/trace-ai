@@ -24,10 +24,11 @@ UAS_LAST_EVENT_AT: datetime | None = None
 UAS_TRACKS: dict[str, dict] = {}
 DEVICE_HEARTBEATS: dict[tuple[str, str], dict] = {}
 SIM_UAS_TRACKS: dict[str, dict] = {}
+MOBILE_UAS_OBSERVATIONS: dict[str, dict] = {}
 
 class UASEvent(BaseModel):
     track_id: str = Field(min_length=1, max_length=128)
-    source: Literal["remote_id", "radar", "rf", "eo", "thermal", "acoustic", "gnss", "airspace"]
+    source: Literal["remote_id", "radar", "rf", "eo", "thermal", "acoustic", "gnss", "airspace", "mobile_camera"]
     timestamp: datetime
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -38,6 +39,24 @@ class UASEvent(BaseModel):
     sensor_confidence: float = Field(default=0.5, ge=0, le=1)
     classification_confidence: float = Field(default=0.5, ge=0, le=1)
     source_reference: str | None = Field(default=None, max_length=255)
+
+class MobileUASObservation(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    observation_id: str = Field(min_length=1, max_length=128)
+    observed_at: datetime
+    observer_latitude: float = Field(ge=-90, le=90)
+    observer_longitude: float = Field(ge=-180, le=180)
+    gps_accuracy_m: float | None = Field(default=None, ge=0, le=5000)
+    device_heading_deg: float | None = Field(default=None, ge=0, le=360)
+    device_pitch_deg: float | None = Field(default=None, ge=-90, le=90)
+    frame_width: int | None = Field(default=None, ge=1, le=10000)
+    frame_height: int | None = Field(default=None, ge=1, le=10000)
+    bbox_x: float | None = Field(default=None, ge=0, le=1)
+    bbox_y: float | None = Field(default=None, ge=0, le=1)
+    bbox_w: float | None = Field(default=None, ge=0, le=1)
+    bbox_h: float | None = Field(default=None, ge=0, le=1)
+    classification: Literal["uav", "aircraft", "bird", "unknown"] = "unknown"
+    confidence: float = Field(default=0.5, ge=0, le=1)
 
 class ConnectorHeartbeat(BaseModel):
     device_id: str = Field(min_length=1, max_length=128)
@@ -172,4 +191,33 @@ def recent_uas_tracks(limit: int = 100, include_simulation: bool = False):
     if include_simulation:
         rows += list(SIM_UAS_TRACKS.values())
     rows = sorted(rows, key=lambda x: x.get("received_at", ""), reverse=True)
+    return rows[: max(1, min(limit, 500))]
+
+
+def ingest_mobile_uas_observation(user_uid: str, observation: MobileUASObservation):
+    now = datetime.now(timezone.utc)
+    key = f"{user_uid}:{observation.session_id}:{observation.observation_id}"
+    payload = observation.model_dump(mode="json")
+    payload.update({
+        "track_id": key,
+        "source": "mobile_camera",
+        "status": "unverified",
+        "simulation": False,
+        "verification_required": True,
+        "observer_uid": user_uid,
+        "location_type": "observer",
+        "estimated_target_latitude": None,
+        "estimated_target_longitude": None,
+        "received_at": now.isoformat(),
+        "sources": ["mobile_camera"],
+    })
+    MOBILE_UAS_OBSERVATIONS[key] = payload
+    if len(MOBILE_UAS_OBSERVATIONS) > 1000:
+        oldest = sorted(MOBILE_UAS_OBSERVATIONS.items(), key=lambda kv: kv[1].get("received_at", ""))[:200]
+        for old_key, _ in oldest:
+            MOBILE_UAS_OBSERVATIONS.pop(old_key, None)
+    return payload
+
+def recent_mobile_uas_observations(limit: int = 100):
+    rows = sorted(MOBILE_UAS_OBSERVATIONS.values(), key=lambda x: x.get("received_at", ""), reverse=True)
     return rows[: max(1, min(limit, 500))]
