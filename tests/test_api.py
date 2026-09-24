@@ -103,3 +103,32 @@ def test_public_wanted_page_and_stats():
     assert "total" in data
     assert "provinces" in data
     assert isinstance(data["provinces"], list)
+
+
+def test_integration_health_and_uas_gateway(monkeypatch):
+    monkeypatch.setenv("TRACE_GATEWAY_KEY", "test-gateway-key")
+    status = client.get("/public/integrations/status")
+    assert status.status_code == 200
+    rows = status.json()
+    assert any(row["id"] == "air" for row in rows)
+
+    event = {
+        "track_id": "test-uav-1",
+        "source": "remote_id",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "latitude": 10.7,
+        "longitude": 106.6,
+        "altitude_m": 120,
+        "speed_mps": 12,
+        "heading_deg": 90,
+        "classification": "uav",
+        "sensor_confidence": 0.9,
+        "classification_confidence": 0.8,
+    }
+    denied = client.post("/integrations/uas/events", json=event)
+    assert denied.status_code == 401
+    accepted = client.post("/integrations/uas/events", json=event, headers={"X-TRACE-Gateway-Key": "test-gateway-key"})
+    assert accepted.status_code == 200
+    tracks = client.get("/uas/tracks", headers=ANALYST)
+    assert tracks.status_code == 200
+    assert tracks.json()["items"][0]["track_id"] == "test-uav-1"
