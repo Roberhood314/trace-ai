@@ -237,7 +237,18 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()")
-    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    image_public_path = (
+        request.url.path.startswith("/public/wanted/")
+        and (
+            request.url.path.endswith("/image")
+            or request.url.path.endswith("/thumbnail")
+            or request.url.path.endswith("/image-data")
+        )
+    )
+    if image_public_path:
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    else:
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
     response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'self' https://sdk.minepi.com; connect-src 'self' https://api.minepi.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'")
     return response
 
