@@ -30,7 +30,7 @@ except Exception:  # Redis remains optional for local/dev fallback.
     redis_async = None
 
 from .database import SessionLocal, engine, get_db
-from .models import AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, User, WantedRecord, WantedRecordHistory
+from .models import AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, UASGeofence, UASObservation, UASReview, UASTrack, UASTrackPoint, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -43,6 +43,7 @@ from .schemas import (
 from .security import CurrentUser, Role, get_current_user, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
+from .services.uas_fusion import fusion_status, ingest_observation as fusion_ingest_observation, review_track as fusion_review_track, track_snapshot
 from .observability import JOB_QUEUE_DEPTH, metrics_middleware, metrics_response
 from .job_queue import enqueue_job
 from .rate_limit import enforce as enforce_rate_limit
@@ -296,6 +297,17 @@ class UASTestRequest(BaseModel):
     center_longitude: float = 106.7009
     tracks: int = 3
     duration_seconds: int = 60
+
+class UASGeofenceCreate(BaseModel):
+    name: str
+    center_latitude: float
+    center_longitude: float
+    radius_m: float
+    severity: str = "warning"
+
+class UASReviewRequest(BaseModel):
+    decision: str
+    note: str | None = None
 
 
 class WantedPageOut(BaseModel):
@@ -734,21 +746,69 @@ def connector_heartbeat(integration_id: str, payload: ConnectorHeartbeat, reques
         raise HTTPException(status_code=404, detail="unknown integration") from None
 
 @app.post("/integrations/uas/events")
-def uas_ingest_event(payload: UASEvent, request: Request):
+def uas_ingest_event(payload: UASEvent, request: Request, db: Session = Depends(get_db)):
     _require_gateway_key(request)
-    return ingest_uas_event(payload)
+    live = ingest_uas_event(payload)
+    observation_key = f"{payload.source}:{payload.track_id}:{payload.timestamp.isoformat()}"
+    obs, track = fusion_ingest_observation(
+        db,
+        observation_key=observation_key,
+        source=payload.source,
+        source_track_id=payload.track_id,
+        observed_at=payload.timestamp,
+        created_by="gateway",
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        altitude_m=payload.altitude_m,
+        speed_mps=payload.speed_mps,
+        heading_deg=payload.heading_deg,
+        classification=payload.classification,
+        confidence=min(payload.sensor_confidence, payload.classification_confidence),
+        metadata={"source_reference": payload.source_reference},
+    )
+    return {
+        "live": live,
+        "fusion_observation_id": obs.id,
+        "fusion_track": track_snapshot(track) if track else None,
+        "verification_required": True,
+    }
 
 @app.post("/uas/mobile/observations")
 def mobile_uas_observation(
     payload: MobileUASObservation,
+    db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
     item = ingest_mobile_uas_observation(user.uid, payload)
+    observation_key = f"mobile:{user.uid}:{payload.session_id}:{payload.observation_id}"
+    obs, track = fusion_ingest_observation(
+        db,
+        observation_key=observation_key,
+        source="mobile_camera",
+        source_track_id=None,
+        observed_at=payload.observed_at,
+        created_by=user.uid,
+        observer_latitude=payload.observer_latitude,
+        observer_longitude=payload.observer_longitude,
+        observer_heading_deg=payload.device_heading_deg,
+        classification=payload.classification,
+        confidence=payload.confidence,
+        metadata={
+            "session_id": payload.session_id,
+            "bbox": [payload.bbox_x, payload.bbox_y, payload.bbox_w, payload.bbox_h],
+            "gps_accuracy_m": payload.gps_accuracy_m,
+            "device_pitch_deg": payload.device_pitch_deg,
+            "frame_width": payload.frame_width,
+            "frame_height": payload.frame_height,
+        },
+    )
     return {
         "accepted": True,
         "mode": "mobile_camera",
         "verification_required": True,
         "observation": item,
+        "fusion_observation_id": obs.id,
+        "fusion_track": track_snapshot(track) if track else None,
     }
 
 @app.get("/uas/mobile/observations")
@@ -863,6 +923,97 @@ def uas_test_status(
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
     return {"mode": "simulation", **UAS_TEST_STATE}
+
+@app.get("/fusion/status")
+def uas_fusion_status(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    return fusion_status(db)
+
+@app.get("/fusion/tracks")
+def uas_fusion_tracks(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    rows = list(db.scalars(
+        select(UASTrack).order_by(UASTrack.last_seen_at.desc()).limit(max(1, min(limit, 500)))
+    ).all())
+    return {"items": [track_snapshot(row) for row in rows]}
+
+@app.get("/fusion/tracks/{track_id}/trajectory")
+def uas_fusion_trajectory(
+    track_id: int,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    track = db.get(UASTrack, track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="track not found")
+    points = list(db.scalars(
+        select(UASTrackPoint)
+        .where(UASTrackPoint.track_id == track_id)
+        .order_by(UASTrackPoint.observed_at.asc())
+        .limit(max(1, min(limit, 1000)))
+    ).all())
+    return {
+        "track": track_snapshot(track),
+        "points": [{
+            "observed_at": p.observed_at,
+            "latitude": p.latitude,
+            "longitude": p.longitude,
+            "altitude_m": p.altitude_m,
+            "speed_mps": p.speed_mps,
+            "heading_deg": p.heading_deg,
+            "confidence": p.confidence,
+        } for p in points],
+    }
+
+@app.post("/fusion/geofences")
+def create_uas_geofence(
+    payload: UASGeofenceCreate,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    if not (-90 <= payload.center_latitude <= 90 and -180 <= payload.center_longitude <= 180):
+        raise HTTPException(status_code=422, detail="invalid geofence coordinates")
+    if payload.radius_m <= 0 or payload.radius_m > 100000:
+        raise HTTPException(status_code=422, detail="invalid geofence radius")
+    if payload.severity not in {"warning", "critical"}:
+        raise HTTPException(status_code=422, detail="invalid severity")
+    row = UASGeofence(
+        name=payload.name[:128],
+        center_latitude=payload.center_latitude,
+        center_longitude=payload.center_longitude,
+        radius_m=payload.radius_m,
+        severity=payload.severity,
+        is_active=True,
+        created_by=user.uid,
+    )
+    db.add(row)
+    add_audit(db, user, "uas_geofence_create", "uas_geofence", None, payload.name[:128])
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name, "severity": row.severity, "radius_m": row.radius_m}
+
+@app.post("/fusion/tracks/{track_id}/review")
+def review_uas_fusion_track(
+    track_id: int,
+    payload: UASReviewRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    try:
+        track = fusion_review_track(db, track_id, payload.decision, user.uid, payload.note)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="track not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    add_audit(db, user, "uas_track_review", "uas_track", track.id, f"decision={payload.decision}")
+    db.commit()
+    return track_snapshot(track)
 
 @app.get("/uas/status")
 async def uas_status(user: CurrentUser = Depends(require_role(Role.VIEWER))):
