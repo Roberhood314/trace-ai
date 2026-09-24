@@ -780,6 +780,15 @@ def mobile_uas_observation(
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
     item = ingest_mobile_uas_observation(user.uid, payload)
+    mobile_heartbeat = ConnectorHeartbeat(
+        device_id=f"mobile:{user.uid}:{payload.session_id}"[:128],
+        platform="gateway",
+        version="mobile-scan-v1",
+        capabilities=["camera", "gps", "heading", "uas_observation"],
+    )
+    ingest_heartbeat("vision", mobile_heartbeat)
+    ingest_heartbeat("geo", mobile_heartbeat)
+    ingest_heartbeat("air", mobile_heartbeat)
     observation_key = f"mobile:{user.uid}:{payload.session_id}:{payload.observation_id}"
     obs, track = fusion_ingest_observation(
         db,
