@@ -35,9 +35,9 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/roberhood314/trace-ai:1.4.5-rc2
+            ghcr.io/roberhood314/trace-ai:2.0.0-alpha4.7
             ghcr.io/roberhood314/trace-ai:solohost
           labels: |
             org.opencontainers.image.source=https://github.com/Roberhood314/trace-ai
             org.opencontainers.image.title=TRACE-AI
-            org.opencontainers.image.version=1.4.5-rc2
+            org.opencontainers.image.version=2.0.0-alpha4.7
