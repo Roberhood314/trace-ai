@@ -193,7 +193,18 @@ app = FastAPI(
 )
 
 allowed_origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if x.strip()]
-origin_regex = os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
+for origin in ("https://tracevnid.fyi", "https://www.tracevnid.fyi"):
+    if origin not in allowed_origins:
+        allowed_origins.append(origin)
+
+configured_origin_regex = os.getenv("CORS_ORIGIN_REGEX", "").strip()
+pi_browser_origin_regex = r"https://([a-z0-9-]+\\.)*(pinet\\.com|minepi\\.com)"
+origin_regex = (
+    f"(?:{configured_origin_regex})|(?:{pi_browser_origin_regex})"
+    if configured_origin_regex
+    else pi_browser_origin_regex
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -201,6 +212,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Role"],
+    max_age=600,
 )
 
 app.middleware("http")(metrics_middleware)
