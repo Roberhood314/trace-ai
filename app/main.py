@@ -1545,6 +1545,11 @@ def _wanted_query(q: str | None, status: str | None, province: str | None = None
     stmt = select(WantedRecord)
     if status in {"active", "dinh_na"}:
         stmt = stmt.where(WantedRecord.status == status)
+    elif status != "all":
+        # Default public wanted views must match the Ministry's current wanted list.
+        # Suspended records stay in the registry/history but are excluded from the
+        # active wanted count unless explicitly requested.
+        stmt = stmt.where(WantedRecord.status == "active")
     if q and q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where(or_(
@@ -1571,7 +1576,8 @@ def _wanted_source_status(db: Session):
         "source_name": SOURCE_NAME,
         "source_url": OFFICIAL_WANTED_URL,
         "suspended_source_url": OFFICIAL_SUSPENDED_URL,
-        "records": total,
+        "records": active,
+        "registry_records": total,
         "active_records": active,
         "suspended_records": suspended,
         "history_events": history,
@@ -1635,7 +1641,9 @@ async def public_wanted_province_stats(response: Response, db: Session = Depends
         response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
         return cached
 
-    addresses = list(db.scalars(select(WantedRecord.registered_address)).all())
+    addresses = list(db.scalars(
+        select(WantedRecord.registered_address).where(WantedRecord.status == "active")
+    ).all())
     counts: dict[str, int] = {}
     for address in addresses:
         label = _province_from_address(address)

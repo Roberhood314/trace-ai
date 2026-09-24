@@ -259,3 +259,37 @@ def test_public_wanted_image_allows_cross_origin_embedding():
     response = client.get("/public/wanted/999999/thumbnail")
     assert response.status_code == 404
     assert response.headers.get("cross-origin-resource-policy") == "cross-origin"
+
+
+def test_public_wanted_defaults_to_active_only():
+    from app.database import SessionLocal
+    from app.models import WantedRecord
+    from app.main import _wanted_source_status
+    import uuid
+
+    with SessionLocal() as db:
+        active = WantedRecord(
+            source_key="test-active-" + uuid.uuid4().hex,
+            full_name="Active Test",
+            source_url="https://truyna.bocongan.gov.vn/",
+            status="active",
+        )
+        suspended = WantedRecord(
+            source_key="test-suspended-" + uuid.uuid4().hex,
+            full_name="Suspended Test",
+            source_url="https://truyna.bocongan.gov.vn/",
+            status="dinh_na",
+        )
+        db.add_all([active, suspended])
+        db.commit()
+        status = _wanted_source_status(db)
+        assert status["records"] == status["active_records"]
+        assert status["registry_records"] == status["active_records"] + status["suspended_records"]
+
+    page = client.get("/public/wanted/page?limit=200&offset=0")
+    assert page.status_code == 200
+    assert all(item["status"] == "active" for item in page.json()["items"])
+
+    suspended_page = client.get("/public/wanted/page?status=dinh_na&limit=200&offset=0")
+    assert suspended_page.status_code == 200
+    assert all(item["status"] == "dinh_na" for item in suspended_page.json()["items"])
