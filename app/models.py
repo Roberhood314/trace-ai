@@ -140,3 +140,18 @@ class OperationalJob(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class ConnectorDevice(Base):
+    __tablename__ = "connector_devices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    integration_id: Mapped[str] = mapped_column(String(32), index=True)
+    platform: Mapped[str] = mapped_column(String(32))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    capabilities_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
