@@ -23,6 +23,7 @@ import AIAnalysisPanel from "./AIAnalysisPanel";
 import AuditPanel from "./AuditPanel";
 import AdminPanel from "./AdminPanel";
 import WantedRadarPanel from "./WantedRadarPanel";
+import FusionCorePanel from "./FusionCorePanel";
 import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, testPaymentConfig } from "./api";
 import { demoCases, demoZones } from "./demoData";
 
@@ -203,6 +204,7 @@ export default function App() {
             {[
               ["overview", "Tổng quan"],
               ["wanted", "Radar truy nã"],
+              ["fusion", "UAS Fusion"],
               ["profile", "Hồ sơ"],
               ["timeline", "Timeline"],
               ["zones", "Vùng tìm kiếm"],
@@ -240,6 +242,10 @@ export default function App() {
 
           {tab === "wanted" && (
             <WantedRadarPanel role={user?.role || "viewer"} />
+          )}
+
+          {tab === "fusion" && (
+            <FusionCorePanel role={user?.role || "viewer"} />
           )}
 
           {tab === "profile" && (
