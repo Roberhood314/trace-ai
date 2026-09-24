@@ -46,7 +46,7 @@ from .services.gateway import public_gateway_signals, public_gateway_status, res
 from .observability import JOB_QUEUE_DEPTH, metrics_middleware, metrics_response
 from .job_queue import enqueue_job
 from .rate_limit import enforce as enforce_rate_limit
-from .integrations import ConnectorHeartbeat, UASEvent, ingest_heartbeat, ingest_uas_event, integration_status, recent_uas_tracks
+from .integrations import ConnectorHeartbeat, UASEvent, clear_simulated_uas_tracks, ingest_heartbeat, ingest_uas_event, integration_status, recent_uas_tracks, set_simulated_uas_track
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -174,6 +174,15 @@ IMAGE_CACHE: OrderedDict[int, tuple[str, bytes]] = OrderedDict()
 THUMB_CACHE_MAX = max(32, min(int(os.getenv("WANTED_THUMB_CACHE_ITEMS", "256") or 256), 1024))
 THUMB_CACHE: OrderedDict[int, bytes] = OrderedDict()
 WANTED_SYNC_LOCK = asyncio.Lock()
+UAS_TEST_TASK: asyncio.Task | None = None
+UAS_TEST_STATE = {
+    "running": False,
+    "started_at": None,
+    "completed_at": None,
+    "tracks": 0,
+    "duration_seconds": 0,
+}
+
 WANTED_SYNC_STATE = {
     "running": False,
     "mode": None,
@@ -270,6 +279,12 @@ class DeviceRegisterRequest(BaseModel):
 
 class DeviceUpdateRequest(BaseModel):
     is_active: bool
+
+class UASTestRequest(BaseModel):
+    center_latitude: float = 10.7769
+    center_longitude: float = 106.7009
+    tracks: int = 3
+    duration_seconds: int = 60
 
 
 class WantedPageOut(BaseModel):
@@ -715,13 +730,103 @@ def uas_ingest_event(payload: UASEvent, request: Request):
 @app.get("/uas/tracks")
 def uas_tracks(
     limit: int = 100,
+    include_simulation: bool = False,
     user: CurrentUser = Depends(require_role(Role.ANALYST)),
 ):
     return {
-        "items": recent_uas_tracks(limit),
+        "items": recent_uas_tracks(limit, include_simulation=include_simulation),
         "classification": "decision-support",
         "verification_required": True,
+        "simulation_included": include_simulation,
     }
+
+
+async def _run_uas_test(center_latitude: float, center_longitude: float, tracks: int, duration_seconds: int):
+    UAS_TEST_STATE.update({
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "tracks": tracks,
+        "duration_seconds": duration_seconds,
+    })
+    try:
+        steps = max(1, min(duration_seconds, 300))
+        for step in range(steps):
+            now = datetime.now(timezone.utc).isoformat()
+            for i in range(tracks):
+                angle = ((step * 7) + (i * 120)) % 360
+                lat = center_latitude + 0.0025 * ((i + 1) / max(1, tracks)) * (1 if (step + i) % 2 == 0 else -1)
+                lon = center_longitude + 0.0025 * (((step % 10) - 5) / 5.0)
+                set_simulated_uas_track(
+                    f"SIM-UAV-{i+1}",
+                    {
+                        "source": "simulation",
+                        "timestamp": now,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitude_m": 60 + i * 35 + (step % 20),
+                        "speed_mps": 8 + i * 3,
+                        "heading_deg": angle,
+                        "classification": "uav",
+                        "sensor_confidence": 0.95,
+                        "classification_confidence": 0.9,
+                        "source_reference": "TRACE UAV TEST MODE",
+                    },
+                )
+            await asyncio.sleep(1)
+    finally:
+        UAS_TEST_STATE.update({
+            "running": False,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+@app.post("/uas/test/start")
+async def start_uas_test(
+    payload: UASTestRequest,
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    global UAS_TEST_TASK
+    if UAS_TEST_TASK and not UAS_TEST_TASK.done():
+        raise HTTPException(status_code=409, detail="UAS test is already running")
+    if not (-90 <= payload.center_latitude <= 90 and -180 <= payload.center_longitude <= 180):
+        raise HTTPException(status_code=422, detail="invalid test center")
+    tracks = max(1, min(int(payload.tracks), 5))
+    duration = max(10, min(int(payload.duration_seconds), 300))
+    clear_simulated_uas_tracks()
+    UAS_TEST_TASK = asyncio.create_task(
+        _run_uas_test(payload.center_latitude, payload.center_longitude, tracks, duration)
+    )
+    return {
+        "mode": "simulation",
+        "running": True,
+        "tracks": tracks,
+        "duration_seconds": duration,
+        "warning": "SIMULATION ONLY - not live UAV detection",
+    }
+
+@app.post("/uas/test/stop")
+async def stop_uas_test(
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    global UAS_TEST_TASK
+    if UAS_TEST_TASK and not UAS_TEST_TASK.done():
+        UAS_TEST_TASK.cancel()
+        try:
+            await UAS_TEST_TASK
+        except asyncio.CancelledError:
+            pass
+    removed = clear_simulated_uas_tracks()
+    UAS_TEST_STATE.update({
+        "running": False,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"mode": "simulation", "running": False, "removed_tracks": removed}
+
+@app.get("/uas/test/status")
+def uas_test_status(
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    return {"mode": "simulation", **UAS_TEST_STATE}
 
 @app.get("/uas/status")
 async def uas_status(user: CurrentUser = Depends(require_role(Role.VIEWER))):
