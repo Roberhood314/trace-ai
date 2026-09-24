@@ -376,14 +376,14 @@ def test_persistent_uas_fusion_core(monkeypatch):
 
     tracks = client.get("/fusion/tracks", headers=ANALYST)
     assert tracks.status_code == 200
-    row = next(x for x in tracks.json()["items"] if x["track_key"].endswith(track_id))
+    row = next(x for x in tracks.json()["items"] if x["id"] == fused["id"])
 
-    trajectory = client.get(f"/fusion/tracks/{row['id']}/trajectory", headers=ANALYST)
+    trajectory = client.get(f"/fusion/tracks/{fused['id']}/trajectory", headers=ANALYST)
     assert trajectory.status_code == 200
     assert len(trajectory.json()["points"]) >= 1
 
     review = client.post(
-        f"/fusion/tracks/{row['id']}/review",
+        f"/fusion/tracks/{fused['id']}/review",
         headers=ANALYST,
         json={"decision": "verified", "note": "test review"},
     )
