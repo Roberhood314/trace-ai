@@ -1183,7 +1183,7 @@ def _province_from_address(address: str | None) -> str:
             return fallback
     return "Chưa xác định"
 
-def _wanted_query(q: str | None, status: str | None):
+def _wanted_query(q: str | None, status: str | None, province: str | None = None):
     stmt = select(WantedRecord)
     if status in {"active", "dinh_na"}:
         stmt = stmt.where(WantedRecord.status == status)
@@ -1196,6 +1196,16 @@ def _wanted_query(q: str | None, status: str | None):
             WantedRecord.warrant_reference.ilike(term),
             WantedRecord.issuing_unit.ilike(term),
         ))
+    if province and province.strip():
+        label = province.strip()
+        terms = [label]
+        if label == "TP. Hồ Chí Minh":
+            terms += ["Hồ Chí Minh", "TP HCM", "TP.HCM"]
+        elif label == "Thừa Thiên Huế":
+            terms += ["Huế", "Thua Thien Hue"]
+        elif label == "Bà Rịa - Vũng Tàu":
+            terms += ["Bà Rịa Vũng Tàu", "Vũng Tàu"]
+        stmt = stmt.where(or_(*[WantedRecord.registered_address.ilike(f"%{term}%") for term in terms]))
     return stmt.order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
 
 
@@ -1227,20 +1237,21 @@ async def public_wanted_page(
     response: Response,
     q: str | None = None,
     status: str | None = None,
+    province: str | None = None,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    cache_key = f"wanted:page:{status or 'all'}:{q or ''}:{limit}:{offset}"
+    cache_key = f"wanted:page:{status or 'all'}:{province or 'all'}:{q or ''}:{limit}:{offset}"
     cached = await cache_get_json(cache_key)
     if cached is not None:
         response.headers["X-TRACE-Cache"] = "HIT"
         response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
         return cached
 
-    stmt = _wanted_query(q, status)
+    stmt = _wanted_query(q, status, province)
     count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
     total = int(db.scalar(count_stmt) or 0)
     items = list(db.scalars(stmt.offset(offset).limit(limit)).all())
