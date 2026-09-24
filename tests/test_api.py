@@ -293,3 +293,44 @@ def test_public_wanted_defaults_to_active_only():
     suspended_page = client.get("/public/wanted/page?status=dinh_na&limit=200&offset=0")
     assert suspended_page.status_code == 200
     assert all(item["status"] == "dinh_na" for item in suspended_page.json()["items"])
+
+
+def test_mobile_camera_gps_uav_observation():
+    payload = {
+        "session_id": "scan-session-1",
+        "observation_id": "obs-1",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "observer_latitude": 11.31,
+        "observer_longitude": 106.10,
+        "gps_accuracy_m": 8.0,
+        "device_heading_deg": 72.0,
+        "device_pitch_deg": 18.0,
+        "frame_width": 1280,
+        "frame_height": 720,
+        "bbox_x": 0.42,
+        "bbox_y": 0.31,
+        "bbox_w": 0.12,
+        "bbox_h": 0.09,
+        "classification": "uav",
+        "confidence": 0.88,
+    }
+
+    denied = client.post("/uas/mobile/observations", headers={"X-Role": "invalid"}, json=payload)
+    assert denied.status_code in {401, 403}
+
+    accepted = client.post("/uas/mobile/observations", headers=VIEWER, json=payload)
+    assert accepted.status_code == 200, accepted.text
+    body = accepted.json()
+    obs = body["observation"]
+    assert body["verification_required"] is True
+    assert obs["source"] == "mobile_camera"
+    assert obs["location_type"] == "observer"
+    assert obs["estimated_target_latitude"] is None
+    assert obs["estimated_target_longitude"] is None
+
+    viewer_list = client.get("/uas/mobile/observations", headers=VIEWER)
+    assert viewer_list.status_code == 403
+
+    analyst_list = client.get("/uas/mobile/observations", headers=ANALYST)
+    assert analyst_list.status_code == 200
+    assert any(item["observation_id"] == "obs-1" for item in analyst_list.json()["items"])
