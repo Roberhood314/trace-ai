@@ -1189,41 +1189,86 @@ async def public_wanted_image_data(wanted_id: int, db: Session = Depends(get_db)
     }
 
 PROVINCE_LABELS = [
-    "TP. Hồ Chí Minh", "Hà Nội", "Hải Phòng", "Đà Nẵng", "Cần Thơ", "Huế",
-    "An Giang", "Bà Rịa - Vũng Tàu", "Bắc Giang", "Bắc Kạn", "Bạc Liêu", "Bắc Ninh", "Bến Tre",
-    "Bình Định", "Bình Dương", "Bình Phước", "Bình Thuận", "Cà Mau", "Cao Bằng", "Đắk Lắk",
-    "Đắk Nông", "Điện Biên", "Đồng Nai", "Đồng Tháp", "Gia Lai", "Hà Giang", "Hà Nam", "Hà Tĩnh",
-    "Hải Dương", "Hậu Giang", "Hòa Bình", "Hưng Yên", "Khánh Hòa", "Kiên Giang", "Kon Tum",
-    "Lai Châu", "Lâm Đồng", "Lạng Sơn", "Lào Cai", "Long An", "Nam Định", "Nghệ An", "Ninh Bình",
-    "Ninh Thuận", "Phú Thọ", "Phú Yên", "Quảng Bình", "Quảng Nam", "Quảng Ngãi", "Quảng Ninh",
-    "Quảng Trị", "Sóc Trăng", "Sơn La", "Tây Ninh", "Thái Bình", "Thái Nguyên", "Thanh Hóa",
-    "Thừa Thiên Huế", "Tiền Giang", "Trà Vinh", "Tuyên Quang", "Vĩnh Long", "Vĩnh Phúc", "Yên Bái",
+    "An Giang", "Bắc Ninh", "Cà Mau", "Cao Bằng", "Cần Thơ", "Đà Nẵng", "Đắk Lắk",
+    "Điện Biên", "Đồng Nai", "Đồng Tháp", "Gia Lai", "Hà Nội", "Hà Tĩnh", "Hải Phòng",
+    "Huế", "Hưng Yên", "Khánh Hòa", "Lai Châu", "Lâm Đồng", "Lạng Sơn", "Lào Cai",
+    "Nghệ An", "Ninh Bình", "Phú Thọ", "Quảng Ngãi", "Quảng Ninh", "Quảng Trị",
+    "Sơn La", "Tây Ninh", "Thái Nguyên", "Thanh Hóa", "TP. Hồ Chí Minh",
+    "Tuyên Quang", "Vĩnh Long",
 ]
+
+# Current 34 provincial-level units after the 2025 reorganization.
+# Historical names are retained only as lookup aliases so source addresses remain unchanged.
+PROVINCE_HISTORICAL_NAMES = {
+    "An Giang": ["An Giang", "Kiên Giang"],
+    "Bắc Ninh": ["Bắc Ninh", "Bắc Giang"],
+    "Cà Mau": ["Cà Mau", "Bạc Liêu"],
+    "Cao Bằng": ["Cao Bằng"],
+    "Cần Thơ": ["Cần Thơ", "Hậu Giang", "Sóc Trăng"],
+    "Đà Nẵng": ["Đà Nẵng", "Quảng Nam"],
+    "Đắk Lắk": ["Đắk Lắk", "Đắc Lắk", "Phú Yên"],
+    "Điện Biên": ["Điện Biên"],
+    "Đồng Nai": ["Đồng Nai", "Bình Phước"],
+    "Đồng Tháp": ["Đồng Tháp", "Tiền Giang"],
+    "Gia Lai": ["Gia Lai", "Bình Định"],
+    "Hà Nội": ["Hà Nội"],
+    "Hà Tĩnh": ["Hà Tĩnh"],
+    "Hải Phòng": ["Hải Phòng", "Hải Dương"],
+    "Huế": ["Huế", "Thừa Thiên Huế"],
+    "Hưng Yên": ["Hưng Yên", "Thái Bình"],
+    "Khánh Hòa": ["Khánh Hòa", "Ninh Thuận"],
+    "Lai Châu": ["Lai Châu"],
+    "Lâm Đồng": ["Lâm Đồng", "Đắk Nông", "Đắc Nông", "Bình Thuận"],
+    "Lạng Sơn": ["Lạng Sơn"],
+    "Lào Cai": ["Lào Cai", "Yên Bái"],
+    "Nghệ An": ["Nghệ An"],
+    "Ninh Bình": ["Ninh Bình", "Nam Định", "Hà Nam"],
+    "Phú Thọ": ["Phú Thọ", "Vĩnh Phúc", "Hòa Bình"],
+    "Quảng Ngãi": ["Quảng Ngãi", "Kon Tum"],
+    "Quảng Ninh": ["Quảng Ninh"],
+    "Quảng Trị": ["Quảng Trị", "Quảng Bình"],
+    "Sơn La": ["Sơn La"],
+    "Tây Ninh": ["Tây Ninh", "Long An"],
+    "Thái Nguyên": ["Thái Nguyên", "Bắc Kạn"],
+    "Thanh Hóa": ["Thanh Hóa", "Thanh Hoá"],
+    "TP. Hồ Chí Minh": [
+        "TP. Hồ Chí Minh", "TP Hồ Chí Minh", "TP.HCM", "TP HCM", "Hồ Chí Minh",
+        "Bình Dương", "Bà Rịa - Vũng Tàu", "Bà Rịa Vũng Tàu", "Vũng Tàu",
+    ],
+    "Tuyên Quang": ["Tuyên Quang", "Hà Giang"],
+    "Vĩnh Long": ["Vĩnh Long", "Bến Tre", "Trà Vinh"],
+}
 
 def _fold_location(value: str) -> str:
     normalized = unicodedata.normalize("NFD", value or "")
     return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").replace("đ", "d").replace("Đ", "D").lower()
 
+_PROVINCE_ALIAS_INDEX = sorted(
+    [
+        (_fold_location(alias), current)
+        for current, aliases in PROVINCE_HISTORICAL_NAMES.items()
+        for alias in aliases
+    ],
+    key=lambda item: len(item[0]),
+    reverse=True,
+)
+
+def _canonical_province_name(value: str | None) -> str | None:
+    folded = _fold_location(value or "").strip()
+    if not folded:
+        return None
+    for alias, current in _PROVINCE_ALIAS_INDEX:
+        if folded == alias:
+            return current
+    return None
+
 def _province_from_address(address: str | None) -> str:
     if not address:
         return "Chưa xác định"
     folded = _fold_location(address)
-    aliases = [
-        ("tp.hcm", "TP. Hồ Chí Minh"), ("tp hcm", "TP. Hồ Chí Minh"), ("ho chi minh", "TP. Hồ Chí Minh"),
-        ("thua thien hue", "Thừa Thiên Huế"), ("ba ria - vung tau", "Bà Rịa - Vũng Tàu"),
-        ("ba ria vung tau", "Bà Rịa - Vũng Tàu"), ("dak lak", "Đắk Lắk"), ("dak nong", "Đắk Nông"),
-    ]
-    for needle, label in aliases:
-        if needle in folded:
-            return label
-    for label in sorted(PROVINCE_LABELS, key=len, reverse=True):
-        if _fold_location(label) in folded:
-            return label
-    parts = [part.strip() for part in address.split(",") if part.strip()]
-    if parts:
-        fallback = re.sub(r"^(tỉnh|thành phố|tp\.?)\s*", "", parts[-1], flags=re.I).strip()
-        if fallback:
-            return fallback
+    for alias, current in _PROVINCE_ALIAS_INDEX:
+        if alias and alias in folded:
+            return current
     return "Chưa xác định"
 
 def _wanted_query(q: str | None, status: str | None, province: str | None = None):
@@ -1240,15 +1285,12 @@ def _wanted_query(q: str | None, status: str | None, province: str | None = None
             WantedRecord.issuing_unit.ilike(term),
         ))
     if province and province.strip():
-        label = province.strip()
-        terms = [label]
-        if label == "TP. Hồ Chí Minh":
-            terms += ["Hồ Chí Minh", "TP HCM", "TP.HCM"]
-        elif label == "Thừa Thiên Huế":
-            terms += ["Huế", "Thua Thien Hue"]
-        elif label == "Bà Rịa - Vũng Tàu":
-            terms += ["Bà Rịa Vũng Tàu", "Vũng Tàu"]
-        stmt = stmt.where(or_(*[WantedRecord.registered_address.ilike(f"%{term}%") for term in terms]))
+        current = _canonical_province_name(province) or province.strip()
+        terms = PROVINCE_HISTORICAL_NAMES.get(current, [current])
+        stmt = stmt.where(or_(*[
+            WantedRecord.registered_address.ilike(f"%{term}%")
+            for term in terms
+        ]))
     return stmt.order_by(WantedRecord.last_seen_at.desc(), WantedRecord.id.desc())
 
 
