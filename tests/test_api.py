@@ -183,3 +183,15 @@ def test_device_pairing_and_uas_ingestion():
         "classification_confidence": 0.5,
     })
     assert forbidden.status_code == 403
+
+
+def test_province_reorganization_mapping():
+    from app.main import _province_from_address
+    assert _province_from_address("TP. Tân An, Long An") == "Tây Ninh"
+    assert _province_from_address("TP. Thủ Dầu Một, Bình Dương") == "TP. Hồ Chí Minh"
+    assert _province_from_address("TP. Vũng Tàu, Bà Rịa - Vũng Tàu") == "TP. Hồ Chí Minh"
+    assert _province_from_address("TP. Đồng Xoài, Bình Phước") == "Đồng Nai"
+    assert _province_from_address("TP. Nam Định, Nam Định") == "Ninh Bình"
+    assert _province_from_address("TP. Bắc Giang, Bắc Giang") == "Bắc Ninh"
+    assert _province_from_address("TP. Hà Giang, Hà Giang") == "Tuyên Quang"
+    assert _province_from_address("TP. Huế, Thừa Thiên Huế") == "Huế"
