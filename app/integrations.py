@@ -4,9 +4,11 @@ import os
 from datetime import datetime, timezone
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, Field
 
 IntegrationState = Literal["connected", "degraded", "not_configured", "error"]
+IntegrationId = Literal["vision", "geo", "air", "satellite", "mobility", "iot", "fusion"]
 
 INTEGRATIONS = {
     "vision": ("VISION_GATEWAY_URL", "Camera/Vision gateway"),
@@ -20,6 +22,7 @@ INTEGRATIONS = {
 
 UAS_LAST_EVENT_AT: datetime | None = None
 UAS_TRACKS: dict[str, dict] = {}
+DEVICE_HEARTBEATS: dict[tuple[str, str], dict] = {}
 
 class UASEvent(BaseModel):
     track_id: str = Field(min_length=1, max_length=128)
@@ -35,46 +38,102 @@ class UASEvent(BaseModel):
     classification_confidence: float = Field(default=0.5, ge=0, le=1)
     source_reference: str | None = Field(default=None, max_length=255)
 
+class ConnectorHeartbeat(BaseModel):
+    device_id: str = Field(min_length=1, max_length=128)
+    platform: Literal["windows", "linux", "macos", "android", "ios", "gateway", "embedded"]
+    version: str | None = Field(default=None, max_length=64)
+    capabilities: list[str] = Field(default_factory=list, max_length=32)
+
 def _iso(value: datetime | None):
     return value.astimezone(timezone.utc).isoformat() if value else None
 
-def integration_status():
+def ingest_heartbeat(integration_id: str, heartbeat: ConnectorHeartbeat):
+    if integration_id not in INTEGRATIONS:
+        raise ValueError("unknown integration")
+    now = datetime.now(timezone.utc)
+    payload = heartbeat.model_dump(mode="json")
+    payload["integration_id"] = integration_id
+    payload["last_seen_at"] = now.isoformat()
+    DEVICE_HEARTBEATS[(integration_id, heartbeat.device_id)] = payload
+    return payload
+
+def _live_heartbeats(integration_id: str, max_age_seconds: int = 90):
     now = datetime.now(timezone.utc)
     rows = []
-    for key, (env_name, label) in INTEGRATIONS.items():
-        url = os.getenv(env_name, "").strip()
-        configured = bool(url)
-        healthy = configured
-        last_event = None
-        detail = f"{label} chưa cấu hình"
-        source_count = 0
-        state: IntegrationState = "not_configured"
-        if key == "air":
-            source_count = len({t.get("source") for t in UAS_TRACKS.values() if t.get("source")})
-            last_event = UAS_LAST_EVENT_AT
-            gateway_key = bool(os.getenv("TRACE_GATEWAY_KEY", "").strip())
-            configured = configured or gateway_key
-            if configured and UAS_LAST_EVENT_AT:
+    for (iid, _), item in DEVICE_HEARTBEATS.items():
+        if iid != integration_id:
+            continue
+        try:
+            seen = datetime.fromisoformat(item["last_seen_at"])
+        except Exception:
+            continue
+        if (now - seen.astimezone(timezone.utc)).total_seconds() <= max_age_seconds:
+            rows.append(item)
+    return rows
+
+async def integration_status():
+    now = datetime.now(timezone.utc)
+    rows = []
+    async with httpx.AsyncClient(timeout=2.5, follow_redirects=True) as client:
+        for key, (env_name, label) in INTEGRATIONS.items():
+            url = os.getenv(env_name, "").strip()
+            token = os.getenv(f"{key.upper()}_GATEWAY_TOKEN", "").strip()
+            heartbeats = _live_heartbeats(key)
+            configured = bool(url or heartbeats or (key == "air" and os.getenv("TRACE_GATEWAY_KEY", "").strip()))
+            healthy = False
+            last_event = None
+            source_count = len(heartbeats)
+            detail = f"{label} chưa cấu hình"
+            state: IntegrationState = "not_configured"
+
+            if key == "air" and UAS_LAST_EVENT_AT:
+                last_event = UAS_LAST_EVENT_AT
                 age = (now - UAS_LAST_EVENT_AT.astimezone(timezone.utc)).total_seconds()
-                healthy = age <= 60
-                state = "connected" if healthy else "degraded"
-                detail = "UAS telemetry live" if healthy else "UAS gateway configured; telemetry stale"
-            elif configured:
+                if age <= 60:
+                    healthy = True
+                    state = "connected"
+                    detail = "UAS telemetry live"
+                else:
+                    state = "degraded"
+                    detail = "UAS gateway configured; telemetry stale"
+                source_count = max(source_count, len({t.get("source") for t in UAS_TRACKS.values() if t.get("source")}))
+
+            if url:
+                headers = {"Accept": "application/json"}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                try:
+                    response = await client.get(url, headers=headers)
+                    if response.status_code < 400:
+                        healthy = True
+                        state = "connected"
+                        detail = f"{label} health probe OK ({response.status_code})"
+                    else:
+                        state = "error"
+                        detail = f"{label} health probe HTTP {response.status_code}"
+                except httpx.HTTPError as exc:
+                    if not healthy:
+                        state = "error"
+                    detail = f"{label} health probe failed: {exc.__class__.__name__}"
+            elif heartbeats and not healthy:
+                healthy = True
+                state = "connected"
+                latest = max(datetime.fromisoformat(x["last_seen_at"]) for x in heartbeats)
+                last_event = latest
+                detail = f"{label} connected via device heartbeat"
+            elif configured and state == "not_configured":
                 state = "degraded"
-                healthy = False
-                detail = "UAS gateway configured; no telemetry received yet"
-        elif configured:
-            state = "connected"
-            detail = f"{label} configured"
-        rows.append({
-            "id": key,
-            "state": state,
-            "configured": configured,
-            "healthy": healthy,
-            "source_count": source_count,
-            "last_event_at": _iso(last_event),
-            "detail": detail,
-        })
+                detail = f"{label} configured; waiting for live heartbeat/data"
+
+            rows.append({
+                "id": key,
+                "state": state,
+                "configured": configured,
+                "healthy": healthy,
+                "source_count": source_count,
+                "last_event_at": _iso(last_event),
+                "detail": detail,
+            })
     return rows
 
 def ingest_uas_event(event: UASEvent):
