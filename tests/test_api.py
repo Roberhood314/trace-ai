@@ -216,3 +216,40 @@ def test_pi_auth_cors_rejects_unknown_origin():
     }
     response = client.options("/auth/pi/verify", headers=headers)
     assert response.status_code == 400
+
+
+def test_uas_user_simulation_mode():
+    denied = client.post("/uas/test/start", json={
+        "center_latitude": 10.77,
+        "center_longitude": 106.70,
+        "tracks": 2,
+        "duration_seconds": 10,
+    })
+    assert denied.status_code in {401, 403}
+
+    started = client.post("/uas/test/start", headers=ANALYST, json={
+        "center_latitude": 10.77,
+        "center_longitude": 106.70,
+        "tracks": 2,
+        "duration_seconds": 10,
+    })
+    assert started.status_code == 200, started.text
+    assert started.json()["mode"] == "simulation"
+    assert started.json()["warning"].startswith("SIMULATION ONLY")
+
+    import time
+    time.sleep(1.2)
+    tracks = client.get("/uas/tracks?include_simulation=true", headers=ANALYST)
+    assert tracks.status_code == 200, tracks.text
+    sim = [x for x in tracks.json()["items"] if x.get("simulation")]
+    assert len(sim) >= 1
+    assert all(x.get("status") == "simulation" for x in sim)
+
+    real_only = client.get("/uas/tracks", headers=ANALYST)
+    assert real_only.status_code == 200
+    assert all(not x.get("simulation") for x in real_only.json()["items"])
+
+    stopped = client.post("/uas/test/stop", headers=ANALYST)
+    assert stopped.status_code == 200, stopped.text
+    after = client.get("/uas/tracks?include_simulation=true", headers=ANALYST)
+    assert all(not x.get("simulation") for x in after.json()["items"])
