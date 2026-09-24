@@ -88,7 +88,7 @@ def test_audit_events_are_hash_chained():
         assert event and event.event_hash and len(event.event_hash) == 64
 
 
-def test_public_wanted_page_and_stats(client):
+def test_public_wanted_page_and_stats():
     page = client.get("/public/wanted/page?limit=25&offset=0")
     assert page.status_code == 200
     body = page.json()
