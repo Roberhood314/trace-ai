@@ -45,6 +45,7 @@ from .services.gateway import public_gateway_signals, public_gateway_status, res
 from .observability import JOB_QUEUE_DEPTH, metrics_middleware, metrics_response
 from .job_queue import enqueue_job
 from .rate_limit import enforce as enforce_rate_limit
+from .integrations import ConnectorHeartbeat, UASEvent, ingest_heartbeat, ingest_uas_event, integration_status, recent_uas_tracks
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -544,6 +545,48 @@ async def start_realtime_listener():
         asyncio.create_task(redis_event_listener())
 
 
+
+
+def _require_gateway_key(request: Request):
+    expected = os.getenv("TRACE_GATEWAY_KEY", "").strip()
+    supplied = request.headers.get("X-TRACE-Gateway-Key", "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="UAS gateway is not configured")
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid gateway credential")
+
+@app.get("/public/integrations/status")
+async def public_integrations_status():
+    return await integration_status()
+
+@app.post("/integrations/{integration_id}/heartbeat")
+def connector_heartbeat(integration_id: str, payload: ConnectorHeartbeat, request: Request):
+    _require_gateway_key(request)
+    try:
+        return ingest_heartbeat(integration_id, payload)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="unknown integration") from None
+
+@app.post("/integrations/uas/events")
+def uas_ingest_event(payload: UASEvent, request: Request):
+    _require_gateway_key(request)
+    return ingest_uas_event(payload)
+
+@app.get("/uas/tracks")
+def uas_tracks(
+    limit: int = 100,
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    return {
+        "items": recent_uas_tracks(limit),
+        "classification": "decision-support",
+        "verification_required": True,
+    }
+
+@app.get("/uas/status")
+async def uas_status(user: CurrentUser = Depends(require_role(Role.VIEWER))):
+    air = next(x for x in await integration_status() if x["id"] == "air")
+    return air
 
 @app.get("/validation-key.txt", include_in_schema=False)
 def pi_domain_validation_key():
