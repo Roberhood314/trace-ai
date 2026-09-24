@@ -219,13 +219,13 @@ def test_pi_auth_cors_rejects_unknown_origin():
 
 
 def test_uas_user_simulation_mode():
-    denied = client.post("/uas/test/start", json={
+    denied = client.post("/uas/test/start", headers=VIEWER, json={
         "center_latitude": 10.77,
         "center_longitude": 106.70,
         "tracks": 2,
         "duration_seconds": 10,
     })
-    assert denied.status_code in {401, 403}
+    assert denied.status_code == 403
 
     started = client.post("/uas/test/start", headers=ANALYST, json={
         "center_latitude": 10.77,
