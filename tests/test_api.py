@@ -331,3 +331,61 @@ def test_mobile_camera_gps_uav_observation():
     analyst_list = client.get("/uas/mobile/observations", headers=ANALYST)
     assert analyst_list.status_code == 200
     assert any(item["observation_id"] == "obs-1" for item in analyst_list.json()["items"])
+
+
+def test_persistent_uas_fusion_core(monkeypatch):
+    monkeypatch.setenv("TRACE_GATEWAY_KEY", "test-gateway-key")
+    geofence = client.post("/fusion/geofences", headers={"X-Role": "commander"}, json={
+        "name": "Test airspace",
+        "center_latitude": 10.7000,
+        "center_longitude": 106.6000,
+        "radius_m": 2000,
+        "severity": "warning",
+    })
+    assert geofence.status_code == 200, geofence.text
+
+    track_id = "fusion-" + uuid.uuid4().hex[:10]
+    event = {
+        "track_id": track_id,
+        "source": "remote_id",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "latitude": 10.7005,
+        "longitude": 106.6005,
+        "altitude_m": 125,
+        "speed_mps": 11,
+        "heading_deg": 95,
+        "classification": "uav",
+        "sensor_confidence": 0.95,
+        "classification_confidence": 0.90,
+    }
+    accepted = client.post(
+        "/integrations/uas/events",
+        headers={"X-TRACE-Gateway-Key": "test-gateway-key"},
+        json=event,
+    )
+    assert accepted.status_code == 200, accepted.text
+    fused = accepted.json()["fusion_track"]
+    assert fused is not None
+    assert fused["classification"] == "uav"
+    assert fused["geofence_state"] == "warning"
+    assert fused["review_status"] == "pending"
+
+    status = client.get("/fusion/status", headers=VIEWER)
+    assert status.status_code == 200
+    assert status.json()["track_correlation"] == "operational"
+
+    tracks = client.get("/fusion/tracks", headers=ANALYST)
+    assert tracks.status_code == 200
+    row = next(x for x in tracks.json()["items"] if x["id"] == fused["id"])
+
+    trajectory = client.get(f"/fusion/tracks/{fused['id']}/trajectory", headers=ANALYST)
+    assert trajectory.status_code == 200
+    assert len(trajectory.json()["points"]) >= 1
+
+    review = client.post(
+        f"/fusion/tracks/{fused['id']}/review",
+        headers=ANALYST,
+        json={"decision": "verified", "note": "test review"},
+    )
+    assert review.status_code == 200
+    assert review.json()["review_status"] == "verified"
