@@ -1290,6 +1290,7 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
                 "Cache-Control": "public, max-age=3600",
                 "X-TRACE-Image-Source": "cache",
                 "X-TRACE-Image-Normalized": "true",
+                "Cross-Origin-Resource-Policy": "cross-origin",
             },
         )
 
@@ -1318,8 +1319,29 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
             detail.raise_for_status()
             parsed = parse_wanted_detail(detail.text, str(detail.url))
             image_url = parsed.get("image_url")
-            # Do not hold/reopen a DB transaction while proxying image bytes.
-            # Source synchronization persists metadata separately.
+            if image_url:
+                with SessionLocal() as image_db:
+                    image_row = image_db.get(WantedRecord, wanted_id)
+                    if image_row:
+                        image_row.image_url = image_url
+                        if parsed.get("danger_level") and not image_row.danger_level:
+                            image_row.danger_level = parsed.get("danger_level")
+                        image_row.source_updated_at = utcnow_naive()
+                        image_row.checksum = record_checksum({
+                            "source_record_id": image_row.source_record_id,
+                            "full_name": image_row.full_name,
+                            "birth_year": image_row.birth_year,
+                            "registered_address": image_row.registered_address,
+                            "parents": image_row.parents,
+                            "offense": image_row.offense,
+                            "warrant_reference": image_row.warrant_reference,
+                            "issuing_unit": image_row.issuing_unit,
+                            "detail_url": image_row.detail_url,
+                            "image_url": image_row.image_url,
+                            "danger_level": image_row.danger_level,
+                            "status": image_row.status,
+                        })
+                        image_db.commit()
 
         if not image_url:
             raise HTTPException(status_code=404, detail="official image not available")
@@ -1365,6 +1387,7 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
             "Cache-Control": "public, max-age=3600",
             "X-TRACE-Image-Source": "truyna.bocongan.gov.vn",
             "X-TRACE-Image-Normalized": "true",
+                "Cross-Origin-Resource-Policy": "cross-origin",
         },
     )
 
@@ -1376,7 +1399,7 @@ async def public_wanted_thumbnail(wanted_id: int, db: Session = Depends(get_db))
         return Response(
             content=cached,
             media_type="image/webp",
-            headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "memory-cache"},
+            headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "memory-cache", "Cross-Origin-Resource-Policy": "cross-origin"},
         )
 
     client = await get_redis_client()
@@ -1388,7 +1411,7 @@ async def public_wanted_thumbnail(wanted_id: int, db: Session = Depends(get_db))
             await raw_client.aclose()
             if raw:
                 THUMB_CACHE[wanted_id] = raw
-                return Response(content=raw, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "redis-cache"})
+                return Response(content=raw, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "redis-cache", "Cross-Origin-Resource-Policy": "cross-origin"})
         except Exception:
             pass
 
@@ -1419,7 +1442,7 @@ async def public_wanted_thumbnail(wanted_id: int, db: Session = Depends(get_db))
     return Response(
         content=thumb,
         media_type="image/webp",
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "generated"},
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800", "X-TRACE-Thumbnail": "generated", "Cross-Origin-Resource-Policy": "cross-origin"},
     )
 
 @app.get("/public/wanted/{wanted_id}/image-data")
