@@ -46,7 +46,7 @@ from .services.gateway import public_gateway_signals, public_gateway_status, res
 from .observability import JOB_QUEUE_DEPTH, metrics_middleware, metrics_response
 from .job_queue import enqueue_job
 from .rate_limit import enforce as enforce_rate_limit
-from .integrations import ConnectorHeartbeat, UASEvent, clear_simulated_uas_tracks, ingest_heartbeat, ingest_uas_event, integration_status, recent_uas_tracks, set_simulated_uas_track
+from .integrations import ConnectorHeartbeat, MobileUASObservation, UASEvent, clear_simulated_uas_tracks, ingest_heartbeat, ingest_mobile_uas_observation, ingest_uas_event, integration_status, recent_mobile_uas_observations, recent_uas_tracks, set_simulated_uas_track
 
 def validate_runtime_config():
     if os.getenv("APP_ENV", "development") == "production":
@@ -737,6 +737,31 @@ def connector_heartbeat(integration_id: str, payload: ConnectorHeartbeat, reques
 def uas_ingest_event(payload: UASEvent, request: Request):
     _require_gateway_key(request)
     return ingest_uas_event(payload)
+
+@app.post("/uas/mobile/observations")
+def mobile_uas_observation(
+    payload: MobileUASObservation,
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    item = ingest_mobile_uas_observation(user.uid, payload)
+    return {
+        "accepted": True,
+        "mode": "mobile_camera",
+        "verification_required": True,
+        "observation": item,
+    }
+
+@app.get("/uas/mobile/observations")
+def mobile_uas_observations(
+    limit: int = 100,
+    user: CurrentUser = Depends(require_role(Role.ANALYST)),
+):
+    return {
+        "items": recent_mobile_uas_observations(limit),
+        "source": "mobile_camera",
+        "location_semantics": "observer_position_plus_bearing",
+        "verification_required": True,
+    }
 
 @app.get("/uas/tracks")
 def uas_tracks(
