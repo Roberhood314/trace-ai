@@ -487,3 +487,60 @@ def test_capacitor_origin_cors():
     )
     assert response.status_code == 200, response.text
     assert response.headers.get("access-control-allow-origin") == "https://localhost"
+
+
+
+def test_official_placeholder_detection():
+    import io
+    import random
+    from PIL import Image, ImageDraw
+    from app.main import _looks_like_official_placeholder
+
+    # Low-detail greyscale silhouette similar to the official no-photo tile.
+    placeholder = Image.new("RGB", (157, 160), (170, 170, 170))
+    draw = ImageDraw.Draw(placeholder)
+    draw.ellipse((48, 20, 109, 82), fill=(225, 225, 225))
+    draw.rounded_rectangle((29, 73, 128, 158), radius=30, fill=(222, 222, 222))
+    buf = io.BytesIO()
+    placeholder.save(buf, format="JPEG", quality=90)
+    assert _looks_like_official_placeholder(buf.getvalue()) is True
+
+    # A detailed, colourful image should not be classified as a source placeholder.
+    detailed = Image.new("RGB", (180, 220))
+    px = detailed.load()
+    rng = random.Random(1234)
+    for y in range(detailed.height):
+        for x in range(detailed.width):
+            px[x, y] = (
+                (x * 7 + rng.randrange(40)) % 256,
+                (y * 5 + rng.randrange(40)) % 256,
+                ((x + y) * 3 + rng.randrange(40)) % 256,
+            )
+    buf = io.BytesIO()
+    detailed.save(buf, format="JPEG", quality=90)
+    assert _looks_like_official_placeholder(buf.getvalue()) is False
+
+
+def test_wanted_image_status_exposed():
+    from app.database import SessionLocal
+    from app.models import WantedRecord
+    import uuid
+
+    with SessionLocal() as db:
+        row = WantedRecord(
+            source_key="image-status-" + uuid.uuid4().hex,
+            source_record_id=str(uuid.uuid4()),
+            full_name="Image Status Test",
+            source_url="https://truyna.bocongan.gov.vn/",
+            status="active",
+            image_status="missing",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        wanted_id = row.id
+
+    response = client.get("/public/wanted?limit=500")
+    assert response.status_code == 200
+    item = next(x for x in response.json() if x["id"] == wanted_id)
+    assert item["image_status"] == "missing"
