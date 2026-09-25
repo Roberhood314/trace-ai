@@ -91,12 +91,14 @@ jobs:
           RESTORED_DATABASE_URL: postgresql://trace:trace@127.0.0.1:5432/trace_restore
         run: |
           python - <<'PY'
-          import os
+          import os, subprocess
           from sqlalchemy import create_engine, text
           url = os.environ["RESTORED_DATABASE_URL"].replace("postgresql://", "postgresql+psycopg://", 1)
+          expected = subprocess.check_output(["alembic", "heads"], text=True).split()[0]
           engine = create_engine(url)
           with engine.connect() as conn:
               assert conn.execute(text("SELECT count(*) FROM cases WHERE case_code='BACKUP-RESTORE-SENTINEL'")).scalar_one() == 1
-              assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0006_uas_fusion_core"
-              print("backup_restore_ok")
+              actual = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+              assert actual == expected, (actual, expected)
+              print("backup_restore_ok revision=", actual)
           PY
