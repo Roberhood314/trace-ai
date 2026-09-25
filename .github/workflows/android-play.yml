@@ -32,10 +32,8 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "sdkmanager not found under $ANDROID_SDK_ROOT/cmdline-tools" >&2
-            find "$ANDROID_SDK_ROOT" -maxdepth 3 -type f -name sdkmanager -print || true
             exit 1
           fi
-          echo "Using $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
       - name: Install dependencies
@@ -56,29 +54,21 @@ jobs:
           sed -i -E 's/compileSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/compileSdkVersion = 36/' android/variables.gradle
           sed -i -E 's/targetSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/targetSdkVersion = 36/' android/variables.gradle
           python -c 'from pathlib import Path; p=Path("android/app/src/main/AndroidManifest.xml"); s=p.read_text(); perms="    <uses-permission android:name=\"android.permission.INTERNET\" />\\n    <uses-permission android:name=\"android.permission.CAMERA\" />\\n    <uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />\\n    <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />\\n"; p.write_text(s if "android.permission.CAMERA" in s else s.replace("<application",perms+"    <application",1))'
-          grep -q 'compileSdkVersion = 36' android/variables.gradle
-          grep -q 'targetSdkVersion = 36' android/variables.gradle
-          grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
-          grep -q 'android.permission.ACCESS_FINE_LOCATION' android/app/src/main/AndroidManifest.xml
           ! grep -q 'ACCESS_BACKGROUND_LOCATION' android/app/src/main/AndroidManifest.xml
       - name: Configure Play release version
         working-directory: web
         run: |
           sed -i -E 's/versionCode [0-9]+/versionCode 1/' android/app/build.gradle
           sed -i -E 's/versionName "[^"]+"/versionName "1.0.0"/' android/app/build.gradle
-          grep -q 'versionCode 1' android/app/build.gradle
-          grep -q 'versionName "1.0.0"' android/app/build.gradle
-
       - name: Configure release signing
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
         working-directory: web/android
         run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release.keystore
           python - <<'PY'
           from pathlib import Path
           p=Path("app/build.gradle")
           s=p.read_text()
-          marker="android {"
           signing="""android {
               signingConfigs {
                   release {
@@ -89,37 +79,29 @@ jobs:
                   }
               }
           """
-          s=s.replace(marker, signing, 1)
+          s=s.replace("android {", signing, 1)
           s=s.replace("buildTypes {", "buildTypes {\n        release { signingConfig signingConfigs.release }", 1)
           p.write_text(s)
           PY
-
       - name: Build release AAB
         working-directory: web/android
         run: ./gradlew bundleRelease
-
-      - name: Verify signing when release secrets are configured
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+      - name: Verify release signing
         working-directory: web/android
         run: |
           jarsigner -verify -verbose -certs app/build/outputs/bundle/release/*.aab
           test -s app/build/outputs/bundle/release/*.aab
-
-      - name: Record release signing state
-        working-directory: web/android
-        run: |
-          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "SIGNED_RELEASE=true" > signing-state.txt
-          else
-            echo "SIGNED_RELEASE=false" > signing-state.txt
-            echo "::warning::AAB is an unsigned CI smoke artifact. Configure Android signing secrets before Google Play upload."
-          fi
-
-      - name: Upload release AAB
+      - name: Upload release AAB artifact
         uses: actions/upload-artifact@v4
         with:
           name: trace-ai-x-play-aab-ci
-          path: |
-            web/android/app/build/outputs/bundle/release/*.aab
-            web/android/signing-state.txt
+          path: web/android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
+      - name: Upload to Google Play closed testing
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ai.trace.traceai
+          releaseFiles: web/android/app/build/outputs/bundle/release/*.aab
+          track: alpha
+          status: completed
