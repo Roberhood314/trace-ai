@@ -41,6 +41,9 @@ jobs:
         run: npm install
       - name: Build web
         working-directory: web
+        env:
+          VITE_API_BASE_URL: https://tracevnid.fyi
+          VITE_PI_SANDBOX: "false"
         run: npm run build
       - name: Generate Capacitor Android project
         working-directory: web
