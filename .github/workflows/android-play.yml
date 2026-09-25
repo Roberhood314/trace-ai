@@ -105,9 +105,21 @@ jobs:
           jarsigner -verify -verbose -certs app/build/outputs/bundle/release/*.aab
           test -s app/build/outputs/bundle/release/*.aab
 
+      - name: Record release signing state
+        working-directory: web/android
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "SIGNED_RELEASE=true" > signing-state.txt
+          else
+            echo "SIGNED_RELEASE=false" > signing-state.txt
+            echo "::warning::AAB is an unsigned CI smoke artifact. Configure Android signing secrets before Google Play upload."
+          fi
+
       - name: Upload release AAB
         uses: actions/upload-artifact@v4
         with:
-          name: trace-ai-x-play-aab
-          path: web/android/app/build/outputs/bundle/release/*.aab
+          name: trace-ai-x-play-aab-ci
+          path: |
+            web/android/app/build/outputs/bundle/release/*.aab
+            web/android/signing-state.txt
           if-no-files-found: error
