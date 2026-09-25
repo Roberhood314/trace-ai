@@ -16,8 +16,9 @@ class Role(StrEnum):
     ANALYST = "analyst"
     COMMANDER = "commander"
     ADMIN = "admin"
+    REVIEWER = "reviewer"
 
-ROLE_LEVEL = {Role.VIEWER: 1, Role.ANALYST: 2, Role.COMMANDER: 3, Role.ADMIN: 4}
+ROLE_LEVEL = {Role.VIEWER: 1, Role.ANALYST: 2, Role.COMMANDER: 3, Role.ADMIN: 4, Role.REVIEWER: 4}
 
 @dataclass
 class CurrentUser:

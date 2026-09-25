@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TRACE AI X - Yêu cầu xóa tài khoản</title>
+</head>
+<body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.6">
+  <h1>Yêu cầu xóa tài khoản TRACE AI X</h1>
+  <p>Trang này dành cho người dùng đã gỡ ứng dụng hoặc không thể truy cập chức năng xóa tài khoản trong app.</p>
+  <p>Khi yêu cầu được tiếp nhận, đội vận hành sẽ xác minh quyền sở hữu tài khoản trước khi xóa. Không gửi Pi passphrase, khóa ví hoặc thông tin bí mật.</p>
+  <form id="delete-form">
+    <label>Tên người dùng Pi<br><input id="pi_username" required minlength="2" maxlength="128" style="width:100%;padding:10px;margin:6px 0 14px"></label>
+    <label>Email liên hệ để xác minh<br><input id="contact_email" type="email" required maxlength="255" style="width:100%;padding:10px;margin:6px 0 14px"></label>
+    <button type="submit" style="padding:10px 16px">Gửi yêu cầu xóa tài khoản</button>
+  </form>
+  <p id="status" role="status"></p>
+  <h2>Dữ liệu được xử lý khi xóa</h2>
+  <p>Tài khoản và chứng cứ do tài khoản tải lên được xóa. Một số bản ghi nghiệp vụ hoặc audit bắt buộc giữ lại vì tính toàn vẹn/an toàn/pháp lý sẽ được loại liên kết định danh khỏi Pi UID theo Chính sách quyền riêng tư.</p>
+  <p><a href="/privacy.html">Xem Chính sách quyền riêng tư TRACE AI X</a></p>
+<script>
+document.getElementById("delete-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const status = document.getElementById("status");
+  status.textContent = "Đang gửi yêu cầu...";
+  try {
+    const r = await fetch("/public/account-deletion-request", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        pi_username: document.getElementById("pi_username").value.trim(),
+        contact_email: document.getElementById("contact_email").value.trim()
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Không thể gửi yêu cầu");
+    status.textContent = "Đã tiếp nhận yêu cầu. Mã yêu cầu: " + data.request_id;
+    e.target.reset();
+  } catch (err) {
+    status.textContent = err.message || "Không thể gửi yêu cầu.";
+  }
+});
+</script>
+</body>
+</html>

@@ -114,3 +114,34 @@ export async function createFusionGeofence(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+
+export async function reviewerLogin(username, password) {
+  const result = await request("/auth/reviewer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  setSessionToken(result.token);
+  return result;
+}
+
+export async function deleteMyAccount() {
+  const result = await request("/account", { method: "DELETE" });
+  setSessionToken("");
+  return result;
+}
+
+
+export async function fetchWantedIntelligence(wantedId) {
+  return request(`/wanted/${wantedId}/intelligence`);
+}
+export async function fetchWantedVisualAnalysis(wantedId) {
+  return request(`/wanted/${wantedId}/visual-analysis`);
+}
+export async function fetchSystemReadiness() {
+  return request("/system/readiness");
+}
+export function wantedImageUrl(wantedId, thumbnail = false) {
+  return `${API_BASE}/public/wanted/${wantedId}/${thumbnail ? "thumbnail" : "image"}`;
+}

@@ -10,3 +10,9 @@ htmlcov/
 .DS_Store
 
 data/uploads/
+
+# Android local signing/secrets
+web/android/.gradle/
+web/android/local.properties
+*.jks
+*.keystore

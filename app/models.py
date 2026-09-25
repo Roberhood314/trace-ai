@@ -16,6 +16,16 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+class AccountDeletionRequest(Base):
+    __tablename__ = "account_deletion_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pi_username: Mapped[str] = mapped_column(String(128), index=True)
+    contact_email: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    request_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
 class Case(Base):
     __tablename__ = "cases"
     id: Mapped[int] = mapped_column(primary_key=True)

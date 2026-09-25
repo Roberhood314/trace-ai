@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Activity, MapPinned, RefreshCw, Route, ShieldCheck } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
+import { Geolocation } from "@capacitor/geolocation";
 import {
   createFusionGeofence,
   fetchFusionStatus,
@@ -55,25 +57,34 @@ export default function FusionCorePanel({ role = "viewer" }) {
   }
 
   async function createGeofenceHere() {
-    if (!navigator.geolocation) {
-      setMessage("Thiết bị không hỗ trợ GPS trình duyệt.");
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        await createFusionGeofence({
-          name: "SoloHost mobile geofence",
-          center_latitude: pos.coords.latitude,
-          center_longitude: pos.coords.longitude,
-          radius_m: 1000,
-          severity: "warning",
-        });
-        setMessage("Đã tạo geofence 1 km tại vị trí hiện tại.");
-        await refresh();
-      } catch (error) {
-        setMessage(error.message || "Không thể tạo geofence");
+    setMessage("");
+    try {
+      let position;
+      if (Capacitor.isNativePlatform()) {
+        const permission = await Geolocation.checkPermissions();
+        if (permission.location !== "granted") {
+          const requested = await Geolocation.requestPermissions();
+          if (requested.location !== "granted") throw new Error("Bạn chưa cấp quyền vị trí.");
+        }
+        position = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
+      } else {
+        if (!navigator.geolocation) throw new Error("Thiết bị không hỗ trợ GPS.");
+        position = await new Promise((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
+        );
       }
-    }, (error) => setMessage(error.message || "Không lấy được GPS"), { enableHighAccuracy: true, timeout: 10000 });
+      await createFusionGeofence({
+        name: "Mobile geofence",
+        center_latitude: position.coords.latitude,
+        center_longitude: position.coords.longitude,
+        radius_m: 1000,
+        severity: "warning",
+      });
+      setMessage("Đã tạo geofence 1 km tại vị trí hiện tại.");
+      await refresh();
+    } catch (error) {
+      setMessage(error.message || "Không lấy được GPS");
+    }
   }
 
   return (

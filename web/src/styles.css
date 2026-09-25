@@ -317,3 +317,42 @@ main { max-width: 980px; margin: 0 auto; padding: 15px; }
 .fusion-points span,.fusion-points small{color:#8fa6c2}
 @media(max-width:720px){.fusion-toolbar{flex-direction:column}.fusion-core-grid,.fusion-metrics{grid-template-columns:1fr 1fr}.fusion-points>div{grid-template-columns:1fr}.fusion-points small{text-align:left}}
 @media(max-width:430px){.fusion-core-grid,.fusion-metrics{grid-template-columns:1fr}}
+
+
+/* TRACE Wanted Intelligence v2 */
+.wanted-radar-v2{align-items:start}
+.wanted-selected-v2{display:grid;gap:16px}
+.wanted-selected-top{display:grid;grid-template-columns:minmax(220px,.72fr) 1.28fr;gap:16px}
+.wanted-selected-data h3{margin:2px 0 14px;font-size:24px}
+.wanted-3d-shell{background:#0e1725;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:12px}
+.wanted-3d-label{font-size:9px;letter-spacing:.14em;color:#6f89a7;margin-bottom:8px}
+.wanted-3d-stage{perspective:900px;min-height:320px;display:grid;place-items:center;overflow:hidden;border-radius:13px;background:radial-gradient(circle at 50% 20%,rgba(37,99,235,.22),rgba(7,12,20,.9) 66%)}
+.wanted-3d-card{width:min(92%,280px);aspect-ratio:3/4;position:relative;transform-style:preserve-3d;transition:transform .14s ease-out;border-radius:16px;overflow:hidden;border:1px solid rgba(121,171,255,.3);box-shadow:0 22px 55px rgba(0,0,0,.44),0 0 34px rgba(37,99,235,.16)}
+.wanted-3d-card img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:4}
+.wanted-image-missing{position:absolute;inset:0;display:grid;place-content:center;gap:6px;text-align:center;background:#121d2c;color:#dce8f7;z-index:4;padding:20px}
+.wanted-image-missing span{color:#7f96b1;font-size:11px}
+.wanted-3d-depth{position:absolute;inset:8px;border-radius:15px;border:1px solid rgba(79,140,255,.15);z-index:1}
+.depth-a{transform:translateZ(-22px) translate(5px,5px)}.depth-b{transform:translateZ(-44px) translate(10px,10px)}
+.wanted-3d-grid{position:absolute;inset:0;z-index:6;pointer-events:none;background-image:linear-gradient(rgba(112,160,222,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(112,160,222,.09) 1px,transparent 1px);background-size:28px 28px;mix-blend-mode:screen}
+.wanted-3d-axis{position:absolute;z-index:7;background:rgba(123,176,255,.35);pointer-events:none}.axis-v{top:0;bottom:0;width:1px;left:50%}.axis-h{left:0;right:0;height:1px;top:50%}
+.wanted-3d-caption{position:absolute;z-index:8;left:0;right:0;bottom:0;padding:32px 12px 12px;background:linear-gradient(transparent,rgba(3,8,15,.92));display:grid;gap:2px}
+.wanted-3d-caption strong{font-size:14px}.wanted-3d-caption span{font-size:10px;color:#a8bad0}
+.wanted-3d-disclaimer{margin:8px 2px 0;color:#7087a3;font-size:10px;line-height:1.45}
+.wanted-intelligence{background:#101a29;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:15px;display:grid;gap:13px}
+.wanted-intel-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.wanted-intel-head h4{margin:0;font-size:18px}
+.wanted-intel-metrics{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wanted-score>div:first-child{display:flex;justify-content:space-between;gap:10px;color:#92a8c2;font-size:11px}.wanted-score strong{color:#fff}
+.wanted-score-track{height:7px;background:#1e2c40;border-radius:99px;overflow:hidden;margin-top:6px}.wanted-score-track i{display:block;height:100%;background:linear-gradient(90deg,#2563eb,#2dd4bf);border-radius:99px}
+.wanted-intel-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.wanted-intel-grid>div{background:#0d1521;border-radius:11px;padding:10px;display:grid;gap:4px}.wanted-intel-grid span{font-size:10px;color:#7890ac}.wanted-intel-grid strong{font-size:12px}
+.wanted-analysis-summary{color:#c5d3e4;line-height:1.55;font-size:12px;padding:12px;background:rgba(37,99,235,.08);border-radius:11px}
+.wanted-visual-metrics{display:flex;gap:7px;flex-wrap:wrap}.wanted-visual-metrics span{font-size:10px;color:#a8bad0;background:#172438;border-radius:999px;padding:6px 8px}
+.wanted-checks{background:#0d1521;border-radius:12px;padding:12px}.wanted-checks>strong{font-size:12px}.wanted-checks p{margin:7px 0 0;color:#9fb0c4;font-size:11px;line-height:1.4}
+.wanted-ai-boundary{display:flex;gap:8px;align-items:flex-start;color:#ffd28a;background:rgba(245,158,11,.08);border-radius:11px;padding:10px;font-size:10px;line-height:1.45}
+.wanted-row{grid-template-columns:46px minmax(0,1fr) auto;align-items:center}.wanted-row-thumb{width:40px;height:52px;object-fit:cover;border-radius:8px;background:#0d1521;border:1px solid rgba(255,255,255,.06)}
+/* TRACE live module readiness */
+.readiness-wrap{display:grid;gap:14px}.readiness-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.readiness-head h4{margin:0 0 6px;font-size:21px}.readiness-head p{margin:0;color:#8fa6c2;font-size:12px;line-height:1.5}.readiness-head button{display:inline-flex;align-items:center;gap:6px}
+.readiness-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.readiness-card{background:#131e2d;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:13px;display:grid;gap:7px}.readiness-card-top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.readiness-card p{margin:0;color:#8fa6c2;font-size:11px;line-height:1.45}.readiness-card small{color:#7087a3}
+.readiness-state{font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:5px 7px;border-radius:999px;background:#1c293a;color:#aebed0}.state-success{background:rgba(16,185,129,.14);color:#80f0c8}.state-warning{background:rgba(245,158,11,.14);color:#ffd28a}.state-danger{background:rgba(239,68,68,.15);color:#ff9c9c}
+.readiness-principle,.readiness-note{display:flex;gap:8px;align-items:center;border-radius:11px;padding:11px;font-size:11px}.readiness-principle{background:rgba(16,185,129,.08);color:#9debd0}.readiness-note{background:rgba(59,130,246,.08);color:#a8c8ff}
+@media(max-width:720px){.wanted-selected-top{grid-template-columns:1fr}.wanted-3d-stage{min-height:300px}.readiness-grid{grid-template-columns:1fr}}
+@media(max-width:430px){.wanted-intel-metrics,.wanted-intel-grid{grid-template-columns:1fr}.wanted-row{grid-template-columns:42px minmax(0,1fr)}.wanted-row-meta{grid-column:2}.readiness-head{flex-direction:column}}

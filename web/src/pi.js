@@ -30,7 +30,7 @@ export function initPi() {
 export async function authenticatePi() {
   if (!window.Pi) {
     setSessionToken("");
-    return { uid: "demo-user", username: "Demo Operator", role: "admin", verified: false, demo: true };
+    throw new Error("Pi SDK không khả dụng trong môi trường này.");
   }
   const incomplete = [];
   const auth = await window.Pi.authenticate(["username", "payments"], (payment) => {

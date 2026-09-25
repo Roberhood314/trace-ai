@@ -1,6 +1,6 @@
 services:
   trace-ai:
-    image: ghcr.io/roberhood314/trace-ai:1.4.5-rc2
+    image: ghcr.io/roberhood314/trace-ai:2.0.0-rc1
     restart: unless-stopped
     labels:
       pi.ui.primary: "true"

@@ -15,13 +15,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+import jwt
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from PIL import Image
-from sqlalchemy import func, or_, select, text
+from PIL import Image, ImageFilter, ImageStat
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 try:
@@ -30,7 +31,7 @@ except Exception:  # Redis remains optional for local/dev fallback.
     redis_async = None
 
 from .database import SessionLocal, engine, get_db
-from .models import AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, UASGeofence, UASObservation, UASReview, UASTrack, UASTrackPoint, User, WantedRecord, WantedRecordHistory
+from .models import AccountDeletionRequest, AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, UASGeofence, UASObservation, UASReview, UASTrack, UASTrackPoint, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -40,7 +41,7 @@ from .schemas import (
     UserOut, UserRoleUpdate,
     WantedRecordOut, WantedSyncOut,
 )
-from .security import CurrentUser, Role, get_current_user, issue_token, require_role
+from .security import CurrentUser, Role, _secret, get_current_user, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 from .services.uas_fusion import fusion_status, ingest_observation as fusion_ingest_observation, review_track as fusion_review_track, track_snapshot
@@ -198,12 +199,17 @@ WANTED_SYNC_STATE = {
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.5.0-rc2",
-    description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
+    version="2.0.0-rc1",
+    description="TRACE AI X: operational command platform with wanted intelligence, UAS fusion, geospatial workflows and human-verified analysis.",
 )
 
 allowed_origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if x.strip()]
-for origin in ("https://tracevnid.fyi", "https://www.tracevnid.fyi"):
+for origin in (
+    "https://tracevnid.fyi",
+    "https://www.tracevnid.fyi",
+    "https://localhost",
+    "capacitor://localhost",
+):
     if origin not in allowed_origins:
         allowed_origins.append(origin)
 
@@ -254,6 +260,20 @@ async def security_headers(request, call_next):
     return response
 
 @app.middleware("http")
+async def reviewer_read_only(request, call_next):
+    if request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+            try:
+                payload = jwt.decode(token, _secret(), algorithms=["HS256"])
+            except jwt.PyJWTError:
+                payload = {}
+            if payload.get("sub") == "play-reviewer":
+                return JSONResponse(status_code=403, content={"detail": "Google Play reviewer account is read-only"})
+    return await call_next(request)
+
+@app.middleware("http")
 async def public_read_cors(request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/public/"):
@@ -291,6 +311,14 @@ class DeviceRegisterRequest(BaseModel):
 
 class DeviceUpdateRequest(BaseModel):
     is_active: bool
+
+class ReviewerLoginRequest(BaseModel):
+    username: str
+    password: str
+
+class AccountDeletionRequestCreate(BaseModel):
+    pi_username: str
+    contact_email: str
 
 class UASTestRequest(BaseModel):
     center_latitude: float = 10.7769
@@ -341,6 +369,30 @@ def _check_test_payment(payment: dict, user: CurrentUser):
         raise HTTPException(status_code=403, detail="payment does not match test purchase")
     if payment.get("status", {}).get("cancelled") or payment.get("status", {}).get("user_cancelled"):
         raise HTTPException(status_code=409, detail="payment cancelled")
+
+@app.post("/public/account-deletion-request")
+def request_account_deletion(payload: AccountDeletionRequestCreate, db: Session = Depends(get_db)):
+    username = payload.pi_username.strip()
+    email = payload.contact_email.strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{2,128}", username):
+        raise HTTPException(status_code=422, detail="invalid Pi username")
+    if not re.fullmatch(r"[^@\s]{1,128}@[^@\s]{1,128}\.[^@\s]{2,63}", email):
+        raise HTTPException(status_code=422, detail="invalid contact email")
+    token = secrets.token_hex(24)
+    row = AccountDeletionRequest(
+        pi_username=username,
+        contact_email=email,
+        status="pending",
+        request_token=token,
+    )
+    db.add(row)
+    db.commit()
+    return {
+        "accepted": True,
+        "request_id": row.id,
+        "message": "Yêu cầu xóa tài khoản đã được tiếp nhận. Chủ tài khoản sẽ được xác minh trước khi dữ liệu bị xóa.",
+    }
+
 
 @app.get("/pi/test-payment/config")
 def test_payment_config():
@@ -1234,6 +1286,29 @@ def metrics(request: Request):
             raise HTTPException(status_code=404, detail="not found")
     return metrics_response()
 
+@app.post("/auth/reviewer", response_model=AuthOut)
+def reviewer_login(payload: ReviewerLoginRequest, db: Session = Depends(get_db)):
+    expected_user = os.getenv("PLAY_REVIEWER_USERNAME", "").strip()
+    expected_password = os.getenv("PLAY_REVIEWER_PASSWORD", "")
+    if not expected_user or not expected_password:
+        raise HTTPException(status_code=404, detail="reviewer login disabled")
+    if not (secrets.compare_digest(payload.username.strip(), expected_user) and secrets.compare_digest(payload.password, expected_password)):
+        raise HTTPException(status_code=401, detail="invalid reviewer credentials")
+    reviewer_uid = "play-reviewer"
+    user = db.scalar(select(User).where(User.pi_uid == reviewer_uid))
+    if not user:
+        user = User(pi_uid=reviewer_uid, username="Google Play Reviewer", role="reviewer")
+        db.add(user)
+    else:
+        user.username = "Google Play Reviewer"
+        user.role = "reviewer"
+        user.is_active = True
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    db.refresh(user)
+    return AuthOut(token=issue_token(user), username=user.username, role=user.role, verified=True)
+
+
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
     if not payload.access_token:
@@ -1269,6 +1344,37 @@ async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)
 @app.get("/users", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.ADMIN))):
     return list(db.scalars(select(User).order_by(User.created_at.asc())).all())
+
+@app.delete("/account")
+def delete_account(db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.VIEWER))):
+    uid = user.uid
+    if uid == "play-reviewer":
+        raise HTTPException(status_code=403, detail="reviewer account cannot be deleted")
+    target = db.scalar(select(User).where(User.pi_uid == uid))
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    deleted_actor = f"deleted-user-{secrets.token_hex(8)}"
+
+    evidence_rows = list(db.scalars(select(Evidence).where(Evidence.created_by == uid)).all())
+    for evidence in evidence_rows:
+        path = UPLOAD_DIR / evidence.stored_name
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+        db.delete(evidence)
+
+    for model in (Case, TimelineEvent, SearchZone, ConnectorDevice, UASObservation, UASGeofence):
+        db.execute(update(model).where(model.created_by == uid).values(created_by=deleted_actor))
+    db.execute(update(UASReview).where(UASReview.reviewer_uid == uid).values(reviewer_uid=deleted_actor))
+    db.execute(update(AuditEvent).where(AuditEvent.actor == uid).values(actor=deleted_actor))
+
+    db.delete(target)
+    db.commit()
+    return {"deleted": True}
+
 
 @app.patch("/users/{user_id}", response_model=UserOut)
 def update_user(user_id: int, payload: UserRoleUpdate, db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.ADMIN))):
@@ -1917,6 +2023,208 @@ def wanted_source_status(
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
     return _wanted_source_status(db)
+
+
+
+@app.get("/wanted/{wanted_id}/intelligence")
+def wanted_record_intelligence(
+    wanted_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    row = db.get(WantedRecord, wanted_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="wanted record not found")
+
+    source_host = (urlparse(row.detail_url or row.source_url or "").hostname or "").lower()
+    official_source = source_host == "truyna.bocongan.gov.vn"
+    fields = {
+        "full_name": bool(row.full_name),
+        "birth_year": row.birth_year is not None,
+        "registered_address": bool(row.registered_address),
+        "parents": bool(row.parents),
+        "offense": bool(row.offense),
+        "warrant_reference": bool(row.warrant_reference),
+        "issuing_unit": bool(row.issuing_unit),
+        "detail_url": bool(row.detail_url),
+        "image_reference": bool(row.image_url or row.detail_url),
+        "checksum": bool(row.checksum),
+    }
+    completeness = round(sum(1 for value in fields.values() if value) / len(fields) * 100)
+    history_count = db.scalar(
+        select(func.count(WantedRecordHistory.id)).where(WantedRecordHistory.wanted_record_id == wanted_id)
+    ) or 0
+
+    checks = []
+    if not official_source:
+        checks.append("Nguồn chi tiết cần được xác minh lại trước khi sử dụng nghiệp vụ.")
+    if not row.image_url:
+        checks.append("Ảnh chưa được lưu URL trực tiếp; hệ thống sẽ thử đọc ảnh từ hồ sơ nguồn chính thức khi mở.")
+    if not row.warrant_reference:
+        checks.append("Thiếu số/ngày quyết định truy nã trong bản ghi hiện tại.")
+    if not row.registered_address:
+        checks.append("Thiếu địa chỉ đăng ký thường trú trong bản ghi hiện tại.")
+    if not checks:
+        checks.append("Hồ sơ có độ đầy đủ cao; vẫn cần đối chiếu nguồn chính thức trước mọi quyết định.")
+
+    return {
+        "wanted_id": row.id,
+        "generated_at": datetime.now(timezone.utc),
+        "source": {
+            "name": row.source_name,
+            "url": row.detail_url or row.source_url,
+            "official_host": official_source,
+            "checksum_present": bool(row.checksum),
+            "history_events": int(history_count),
+            "last_seen_at": row.last_seen_at,
+            "source_updated_at": row.source_updated_at,
+        },
+        "record": {
+            "status": row.status,
+            "danger_level": row.danger_level,
+            "completeness_percent": completeness,
+            "field_presence": fields,
+        },
+        "analysis": {
+            "summary": (
+                f"Hồ sơ {row.full_name} hiện có mức đầy đủ dữ liệu {completeness}%. "
+                f"Trạng thái nguồn: {'chính thức' if official_source else 'cần xác minh'}. "
+                f"Hệ thống ghi nhận {int(history_count)} sự kiện lịch sử thay đổi."
+            ),
+            "recommended_checks": checks,
+            "identity_decision": "human_verification_required",
+        },
+        "disclaimer": "Phân tích hỗ trợ rà soát dữ liệu; không tự kết luận danh tính một người từ hình ảnh.",
+    }
+
+
+@app.get("/wanted/{wanted_id}/visual-analysis")
+async def wanted_record_visual_analysis(
+    wanted_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    row = db.get(WantedRecord, wanted_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="wanted record not found")
+
+    try:
+        image_response = await public_wanted_image(wanted_id, db)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return {
+                "wanted_id": wanted_id,
+                "available": False,
+                "quality_score": 0,
+                "reason": "official image not available",
+                "identity_decision": "human_verification_required",
+            }
+        raise
+
+    try:
+        with Image.open(io.BytesIO(image_response.body)) as image:
+            image = image.convert("RGB")
+            width, height = image.size
+            gray = image.convert("L")
+            stats = ImageStat.Stat(gray)
+            brightness = float(stats.mean[0])
+            contrast = float(stats.stddev[0])
+            edges = gray.filter(ImageFilter.FIND_EDGES)
+            edge_mean = float(ImageStat.Stat(edges).mean[0])
+    except Exception:
+        raise HTTPException(status_code=502, detail="official image analysis failed") from None
+
+    megapixels = (width * height) / 1_000_000
+    resolution_score = min(100.0, megapixels / 0.5 * 100.0)
+    brightness_score = max(0.0, 100.0 - abs(brightness - 128.0) / 128.0 * 100.0)
+    contrast_score = min(100.0, contrast / 55.0 * 100.0)
+    sharpness_score = min(100.0, edge_mean / 22.0 * 100.0)
+    quality_score = round(
+        resolution_score * 0.35
+        + brightness_score * 0.20
+        + contrast_score * 0.20
+        + sharpness_score * 0.25
+    )
+
+    observations = []
+    if resolution_score < 45:
+        observations.append("Độ phân giải thấp; không nên phóng lớn để suy luận chi tiết khuôn mặt.")
+    if brightness < 55:
+        observations.append("Ảnh tối; chi tiết vùng tối có thể không đáng tin cậy.")
+    elif brightness > 205:
+        observations.append("Ảnh sáng mạnh; một số chi tiết có thể bị mất.")
+    if contrast_score < 35:
+        observations.append("Độ tương phản thấp.")
+    if sharpness_score < 35:
+        observations.append("Độ sắc nét thấp hoặc ảnh có thể bị mờ.")
+    if not observations:
+        observations.append("Ảnh đủ chất lượng cho đối chiếu trực quan thủ công.")
+
+    return {
+        "wanted_id": wanted_id,
+        "available": True,
+        "dimensions": {"width": width, "height": height, "megapixels": round(megapixels, 3)},
+        "metrics": {
+            "brightness": round(brightness, 1),
+            "contrast": round(contrast, 1),
+            "edge_sharpness": round(edge_mean, 1),
+        },
+        "quality_score": quality_score,
+        "manual_comparison_ready": quality_score >= 55,
+        "observations": observations,
+        "identity_decision": "human_verification_required",
+        "disclaimer": "Chỉ đánh giá chất lượng ảnh và khả năng đối chiếu thủ công; không thực hiện nhận dạng sinh trắc học tự động.",
+    }
+
+
+@app.get("/system/readiness")
+async def system_readiness(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    integrations = await integration_status()
+    by_id = {item["id"]: item for item in integrations}
+    wanted_count = db.scalar(select(func.count(WantedRecord.id)).where(WantedRecord.status == "active")) or 0
+    fusion = fusion_status(db)
+
+    def connector_state(integration_id: str):
+        item = by_id.get(integration_id)
+        if not item:
+            return {"state": "not_configured", "detail": "connector definition unavailable"}
+        return {
+            "state": item.get("status", "not_configured"),
+            "detail": item.get("detail") or item.get("message"),
+            "last_seen": item.get("last_seen"),
+        }
+
+    modules = {
+        "wanted_registry": {
+            "state": "operational" if wanted_count > 0 else "degraded",
+            "records": int(wanted_count),
+            "detail": "Official wanted registry data available" if wanted_count > 0 else "No active wanted records loaded",
+        },
+        "wanted_image_proxy": {
+            "state": "operational",
+            "detail": "Official-source image proxy, cache and thumbnail pipeline enabled",
+        },
+        "wanted_visual_analysis": {
+            "state": "operational",
+            "detail": "Image quality analysis enabled; no automatic biometric identity conclusion",
+        },
+        "fusion_core": {
+            "state": "operational",
+            "detail": fusion.get("engine", "TRACE Fusion Core"),
+            "active_tracks": fusion.get("active_tracks", 0),
+        },
+        "vision_connector": connector_state("vision"),
+        "geo_connector": connector_state("geo"),
+        "airspace_connector": connector_state("air"),
+    }
+    return {
+        "generated_at": datetime.now(timezone.utc),
+        "modules": modules,
+        "principle": "Preserve → Extend → Validate → Upgrade",
+    }
 
 
 @app.get("/wanted/{wanted_id}/history")

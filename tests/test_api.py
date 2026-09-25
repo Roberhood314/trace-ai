@@ -389,3 +389,101 @@ def test_persistent_uas_fusion_core(monkeypatch):
     )
     assert review.status_code == 200
     assert review.json()["review_status"] == "verified"
+
+
+
+def test_wanted_intelligence_and_readiness():
+    from app.database import SessionLocal
+    from app.models import WantedRecord
+    import uuid
+
+    with SessionLocal() as db:
+        row = WantedRecord(
+            source_key="intel-" + uuid.uuid4().hex,
+            source_record_id="trace-test",
+            full_name="TRACE Intelligence Test",
+            birth_year=1990,
+            registered_address="Tây Ninh",
+            offense="Test offense",
+            warrant_reference="QD-TEST",
+            issuing_unit="Test Unit",
+            detail_url="https://truyna.bocongan.gov.vn/test",
+            image_url="https://truyna.bocongan.gov.vn/test-image.jpg",
+            source_url="https://truyna.bocongan.gov.vn/",
+            status="active",
+            checksum="a" * 64,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        wanted_id = row.id
+
+    intel = client.get(f"/wanted/{wanted_id}/intelligence", headers=VIEWER)
+    assert intel.status_code == 200, intel.text
+    body = intel.json()
+    assert body["wanted_id"] == wanted_id
+    assert body["source"]["official_host"] is True
+    assert body["record"]["completeness_percent"] >= 70
+    assert body["analysis"]["identity_decision"] == "human_verification_required"
+
+    readiness = client.get("/system/readiness", headers=VIEWER)
+    assert readiness.status_code == 200, readiness.text
+    modules = readiness.json()["modules"]
+    assert modules["wanted_registry"]["state"] == "operational"
+    assert modules["wanted_visual_analysis"]["state"] == "operational"
+    assert modules["fusion_core"]["state"] == "operational"
+
+
+def test_wanted_visual_analysis_uses_official_image_pipeline(monkeypatch):
+    import io
+    import uuid
+    from PIL import Image
+    from fastapi.responses import Response
+    import app.main as main_module
+    from app.database import SessionLocal
+    from app.models import WantedRecord
+
+    with SessionLocal() as db:
+        row = WantedRecord(
+            source_key="visual-" + uuid.uuid4().hex,
+            full_name="TRACE Visual Test",
+            detail_url="https://truyna.bocongan.gov.vn/test",
+            source_url="https://truyna.bocongan.gov.vn/",
+            status="active",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        wanted_id = row.id
+
+    image = Image.new("RGB", (800, 1000), (120, 135, 150))
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=90)
+
+    async def fake_public_wanted_image(_wanted_id, _db):
+        assert _wanted_id == wanted_id
+        return Response(content=out.getvalue(), media_type="image/jpeg")
+
+    monkeypatch.setattr(main_module, "public_wanted_image", fake_public_wanted_image)
+
+    analysis = client.get(f"/wanted/{wanted_id}/visual-analysis", headers=VIEWER)
+    assert analysis.status_code == 200, analysis.text
+    body = analysis.json()
+    assert body["available"] is True
+    assert body["dimensions"]["width"] == 800
+    assert body["dimensions"]["height"] == 1000
+    assert 0 <= body["quality_score"] <= 100
+    assert body["identity_decision"] == "human_verification_required"
+
+
+def test_capacitor_origin_cors():
+    response = client.options(
+        "/wanted",
+        headers={
+            "Origin": "https://localhost",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers.get("access-control-allow-origin") == "https://localhost"
