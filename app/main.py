@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 try:
@@ -291,6 +291,10 @@ class DeviceRegisterRequest(BaseModel):
 
 class DeviceUpdateRequest(BaseModel):
     is_active: bool
+
+class ReviewerLoginRequest(BaseModel):
+    username: str
+    password: str
 
 class UASTestRequest(BaseModel):
     center_latitude: float = 10.7769
@@ -1234,6 +1238,29 @@ def metrics(request: Request):
             raise HTTPException(status_code=404, detail="not found")
     return metrics_response()
 
+@app.post("/auth/reviewer", response_model=AuthOut)
+def reviewer_login(payload: ReviewerLoginRequest, db: Session = Depends(get_db)):
+    expected_user = os.getenv("PLAY_REVIEWER_USERNAME", "").strip()
+    expected_password = os.getenv("PLAY_REVIEWER_PASSWORD", "")
+    if not expected_user or not expected_password:
+        raise HTTPException(status_code=404, detail="reviewer login disabled")
+    if not (secrets.compare_digest(payload.username.strip(), expected_user) and secrets.compare_digest(payload.password, expected_password)):
+        raise HTTPException(status_code=401, detail="invalid reviewer credentials")
+    reviewer_uid = "play-reviewer"
+    user = db.scalar(select(User).where(User.pi_uid == reviewer_uid))
+    if not user:
+        user = User(pi_uid=reviewer_uid, username="Google Play Reviewer", role="viewer")
+        db.add(user)
+    else:
+        user.username = "Google Play Reviewer"
+        user.role = "viewer"
+        user.is_active = True
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    db.refresh(user)
+    return AuthOut(token=issue_token(user), username=user.username, role=user.role, verified=True)
+
+
 @app.post("/auth/pi/verify", response_model=AuthOut)
 async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)):
     if not payload.access_token:
@@ -1269,6 +1296,37 @@ async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)
 @app.get("/users", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.ADMIN))):
     return list(db.scalars(select(User).order_by(User.created_at.asc())).all())
+
+@app.delete("/account")
+def delete_account(db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.VIEWER))):
+    uid = user.uid
+    if uid == "play-reviewer":
+        raise HTTPException(status_code=403, detail="reviewer account cannot be deleted")
+    target = db.scalar(select(User).where(User.pi_uid == uid))
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    deleted_actor = f"deleted-user-{secrets.token_hex(8)}"
+
+    evidence_rows = list(db.scalars(select(Evidence).where(Evidence.created_by == uid)).all())
+    for evidence in evidence_rows:
+        path = UPLOAD_DIR / evidence.stored_name
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+        db.delete(evidence)
+
+    for model in (Case, TimelineEvent, SearchZone, ConnectorDevice, UASObservation, UASGeofence):
+        db.execute(update(model).where(model.created_by == uid).values(created_by=deleted_actor))
+    db.execute(update(UASReview).where(UASReview.reviewer_uid == uid).values(reviewer_uid=deleted_actor))
+    db.execute(update(AuditEvent).where(AuditEvent.actor == uid).values(actor=deleted_actor))
+
+    db.delete(target)
+    db.commit()
+    return {"deleted": True}
+
 
 @app.patch("/users/{user_id}", response_model=UserOut)
 def update_user(user_id: int, payload: UserRoleUpdate, db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.ADMIN))):
