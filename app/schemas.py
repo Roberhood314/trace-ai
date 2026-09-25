@@ -118,6 +118,8 @@ class WantedRecordOut(BaseModel):
     issuing_unit: str | None = None
     detail_url: str | None = None
     image_url: str | None = None
+    image_status: str = "unchecked"
+    image_checked_at: datetime | None = None
     danger_level: str | None = None
     source_url: str
     source_name: str

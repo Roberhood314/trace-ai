@@ -116,6 +116,8 @@ class WantedRecord(Base):
     issuing_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
     detail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_status: Mapped[str] = mapped_column(String(24), default="unchecked", index=True)
+    image_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     danger_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_url: Mapped[str] = mapped_column(Text)
     source_name: Mapped[str] = mapped_column(String(255), default="Cổng thông tin truy nã - Bộ Công an")
