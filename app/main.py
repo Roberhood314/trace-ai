@@ -606,6 +606,12 @@ async def _run_wanted_sync(full: bool, actor: str = "system"):
             })
             await cache_delete_prefix("wanted:")
             await publish_event("wanted.sync.completed", totals)
+            if full:
+                try:
+                    with SessionLocal() as image_db:
+                        enqueue_job(image_db, "wanted_image_sync", {"limit": 500})
+                except Exception:
+                    pass
             return totals
         except Exception as exc:
             WANTED_SYNC_STATE.update({
@@ -1579,6 +1585,137 @@ async def gateway_weather_public(lat: float, lon: float):
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"weather gateway unavailable: {exc.__class__.__name__}")
 
+
+def _official_portrait_url(source_record_id: str, width: int = 360, height: int = 480) -> str:
+    return (
+        "https://truyna.bocongan.gov.vn/DesktopModules/PoliceTruyNaToiPham/"
+        f"ShowImage.aspx?Height={height}&TruyNaId={source_record_id}&Width={width}"
+    )
+
+
+def _looks_like_official_placeholder(image_bytes: bytes) -> bool:
+    """Detect the low-detail grey silhouette returned when the source has no portrait."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = image.convert("RGB").resize((96, 96), Image.Resampling.BILINEAR)
+            hsv = rgb.convert("HSV")
+            saturation = float(ImageStat.Stat(hsv).mean[1])
+            gray = rgb.convert("L")
+            entropy = float(gray.entropy())
+            quantized = rgb.quantize(colors=8)
+            counts = sorted((count for count, _ in (quantized.getcolors() or [])), reverse=True)
+            dominance = (sum(counts[:3]) / (96 * 96)) if counts else 0.0
+            return saturation < 10.0 and entropy < 4.7 and dominance > 0.78
+    except Exception:
+        return False
+
+
+async def _fetch_official_portrait(
+    client: httpx.AsyncClient,
+    *,
+    source_record_id: str | None,
+    image_url: str | None,
+    detail_url: str | None,
+) -> tuple[str | None, str | None, bytes | None, bool]:
+    candidate = _official_portrait_url(source_record_id) if source_record_id else image_url
+    if not candidate and detail_url:
+        detail_host = (urlparse(detail_url).hostname or "").lower()
+        if detail_host != "truyna.bocongan.gov.vn":
+            return None, None, None, False
+        detail = await client.get(detail_url)
+        detail.raise_for_status()
+        parsed = parse_wanted_detail(detail.text, str(detail.url))
+        candidate = parsed.get("image_url")
+
+    if not candidate:
+        return None, None, None, False
+    if (urlparse(candidate).hostname or "").lower() != "truyna.bocongan.gov.vn":
+        return None, None, None, False
+
+    response = await client.get(candidate)
+    response.raise_for_status()
+    content_type = response.headers.get("content-type", "image/jpeg").split(";")[0].strip().lower()
+    if not content_type.startswith("image/"):
+        return candidate, content_type, None, False
+    image_bytes = response.content
+    if _looks_like_official_placeholder(image_bytes):
+        return candidate, content_type, image_bytes, True
+    return candidate, content_type, image_bytes, False
+
+
+async def _run_wanted_image_sync(limit: int = 200, actor: str = "worker"):
+    limit = max(1, min(int(limit), 500))
+    with SessionLocal() as db:
+        rows = list(db.scalars(
+            select(WantedRecord)
+            .where(WantedRecord.status == "active", WantedRecord.source_record_id.is_not(None))
+            .order_by(WantedRecord.image_checked_at.asc().nullsfirst(), WantedRecord.id.desc())
+            .limit(limit)
+        ).all())
+        targets = [{
+            "id": row.id,
+            "source_record_id": row.source_record_id,
+            "image_url": row.image_url,
+            "detail_url": row.detail_url,
+        } for row in rows]
+
+    stats = {"checked": 0, "available": 0, "missing": 0, "errors": 0}
+    headers = {
+        "User-Agent": "TRACE-AI/2.0 (+official public-data portrait sync)",
+        "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
+    }
+    sem = asyncio.Semaphore(4)
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
+        async def inspect(item):
+            async with sem:
+                try:
+                    url, content_type, image_bytes, placeholder = await _fetch_official_portrait(
+                        client,
+                        source_record_id=item["source_record_id"],
+                        image_url=item["image_url"],
+                        detail_url=item["detail_url"],
+                    )
+                    return item, url, content_type, image_bytes, placeholder, None
+                except Exception as exc:
+                    return item, None, None, None, False, exc
+
+        results = await asyncio.gather(*(inspect(item) for item in targets))
+
+    now = utcnow_naive()
+    with SessionLocal() as db:
+        for item, url, _content_type, image_bytes, placeholder, error in results:
+            row = db.get(WantedRecord, item["id"])
+            if not row:
+                continue
+            stats["checked"] += 1
+            row.image_checked_at = now
+            if error is not None:
+                row.image_status = "error"
+                stats["errors"] += 1
+                continue
+            if not url or not image_bytes or placeholder:
+                row.image_status = "missing"
+                stats["missing"] += 1
+                continue
+            row.image_url = url
+            row.image_status = "available"
+            row.source_updated_at = now
+            stats["available"] += 1
+        db.add(AuditEvent(
+            actor=actor,
+            action="wanted_image_sync",
+            resource_type="wanted_source",
+            detail=(
+                f"checked={stats['checked']};available={stats['available']};"
+                f"missing={stats['missing']};errors={stats['errors']}"
+            ),
+        ))
+        db.commit()
+    await cache_delete_prefix("wanted:")
+    return stats
+
+
 @app.get("/public/wanted/{wanted_id}/image")
 async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
     cached = IMAGE_CACHE.get(wanted_id)
@@ -1599,99 +1736,68 @@ async def public_wanted_image(wanted_id: int, db: Session = Depends(get_db)):
     row = db.get(WantedRecord, wanted_id)
     if not row:
         raise HTTPException(status_code=404, detail="wanted record not found")
+    if row.image_status == "missing":
+        raise HTTPException(status_code=404, detail="official portrait not available")
 
+    source_record_id = row.source_record_id
     image_url = row.image_url
     detail_url = row.detail_url
-    # Release the DB connection before any slow external network I/O.
-    # This prevents bulk image loading from exhausting the SQLAlchemy pool
-    # and blocking core endpoints such as /public/wanted and Radar data.
     db.close()
 
     headers = {
-        "User-Agent": "TRACE-AI/1.4 (+official public-data image proxy)",
+        "User-Agent": "TRACE-AI/2.0 (+official public-data image proxy)",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
     }
-
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-        if not image_url and detail_url:
-            detail_host = (urlparse(detail_url).hostname or "").lower()
-            if detail_host != "truyna.bocongan.gov.vn":
-                raise HTTPException(status_code=400, detail="unsupported official detail host")
-            detail = await client.get(detail_url)
-            detail.raise_for_status()
-            parsed = parse_wanted_detail(detail.text, str(detail.url))
-            image_url = parsed.get("image_url")
-            if image_url:
-                with SessionLocal() as image_db:
-                    image_row = image_db.get(WantedRecord, wanted_id)
-                    if image_row:
-                        image_row.image_url = image_url
-                        if parsed.get("danger_level") and not image_row.danger_level:
-                            image_row.danger_level = parsed.get("danger_level")
-                        image_row.source_updated_at = utcnow_naive()
-                        image_row.checksum = record_checksum({
-                            "source_record_id": image_row.source_record_id,
-                            "full_name": image_row.full_name,
-                            "birth_year": image_row.birth_year,
-                            "registered_address": image_row.registered_address,
-                            "parents": image_row.parents,
-                            "offense": image_row.offense,
-                            "warrant_reference": image_row.warrant_reference,
-                            "issuing_unit": image_row.issuing_unit,
-                            "detail_url": image_row.detail_url,
-                            "image_url": image_row.image_url,
-                            "danger_level": image_row.danger_level,
-                            "status": image_row.status,
-                        })
-                        image_db.commit()
-
-        if not image_url:
-            raise HTTPException(status_code=404, detail="official image not available")
-
-        image_host = (urlparse(image_url).hostname or "").lower()
-        if image_host != "truyna.bocongan.gov.vn":
-            raise HTTPException(status_code=400, detail="unsupported official image host")
-
-        try:
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
             async with IMAGE_FETCH_SEMAPHORE:
-                image_response = await client.get(image_url)
-                image_response.raise_for_status()
-                image_bytes = image_response.content
-                raw_content_type = image_response.headers.get("content-type", "image/jpeg")
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"official image fetch failed: {exc.__class__.__name__}")
+                candidate, content_type, image_bytes, placeholder = await _fetch_official_portrait(
+                    client,
+                    source_record_id=source_record_id,
+                    image_url=image_url,
+                    detail_url=detail_url,
+                )
+    except httpx.HTTPError as exc:
+        with SessionLocal() as image_db:
+            image_row = image_db.get(WantedRecord, wanted_id)
+            if image_row:
+                image_row.image_status = "error"
+                image_row.image_checked_at = utcnow_naive()
+                image_db.commit()
+        raise HTTPException(status_code=502, detail=f"official image fetch failed: {exc.__class__.__name__}") from None
 
-        content_type = raw_content_type.split(";")[0].strip().lower()
-        if not content_type.startswith("image/"):
-            raise HTTPException(status_code=502, detail="official source did not return an image")
+    now = utcnow_naive()
+    with SessionLocal() as image_db:
+        image_row = image_db.get(WantedRecord, wanted_id)
+        if image_row:
+            image_row.image_checked_at = now
+            if candidate and image_bytes and not placeholder:
+                image_row.image_url = candidate
+                image_row.image_status = "available"
+                image_row.source_updated_at = now
+            else:
+                image_row.image_status = "missing"
+            image_db.commit()
 
-        if content_type in {"image/jpeg", "image/jpg"}:
-            if not image_bytes.startswith(b"\xff\xd8"):
-                raise HTTPException(status_code=502, detail="official JPEG signature is invalid")
-            end = image_bytes.find(b"\xff\xd9")
-            if end >= 0:
-                image_bytes = image_bytes[: end + 2]
-        elif content_type == "image/png":
-            marker = b"IEND\xaeB\x60\x82"
-            end = image_bytes.find(marker)
-            if end >= 0:
-                image_bytes = image_bytes[: end + len(marker)]
+    if not candidate or not image_bytes or placeholder:
+        raise HTTPException(status_code=404, detail="official portrait not available")
 
-    IMAGE_CACHE[wanted_id] = (content_type, image_bytes)
+    IMAGE_CACHE[wanted_id] = (content_type or "image/jpeg", image_bytes)
     IMAGE_CACHE.move_to_end(wanted_id)
     while len(IMAGE_CACHE) > IMAGE_CACHE_MAX:
         IMAGE_CACHE.popitem(last=False)
 
     return Response(
         content=image_bytes,
-        media_type=content_type,
+        media_type=content_type or "image/jpeg",
         headers={
             "Cache-Control": "public, max-age=3600",
             "X-TRACE-Image-Source": "truyna.bocongan.gov.vn",
             "X-TRACE-Image-Normalized": "true",
-                "Cross-Origin-Resource-Policy": "cross-origin",
+            "Cross-Origin-Resource-Policy": "cross-origin",
         },
     )
+
 
 @app.get("/public/wanted/{wanted_id}/thumbnail")
 async def public_wanted_thumbnail(wanted_id: int, db: Session = Depends(get_db)):
@@ -2265,6 +2371,20 @@ def enqueue_wanted_sync_job(
     add_audit(db, user, "job_enqueue", "operational_job", job.id, f"type=wanted_sync;full={full}")
     db.commit()
     return {"id": job.id, "job_type": job.job_type, "status": job.status, "full": full}
+
+
+
+@app.post("/jobs/wanted-image-sync")
+def enqueue_wanted_image_sync_job(
+    limit: int = 250,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.COMMANDER)),
+):
+    limit = max(1, min(limit, 500))
+    job = enqueue_job(db, "wanted_image_sync", {"limit": limit})
+    add_audit(db, user, "job_enqueue", "operational_job", job.id, f"type=wanted_image_sync;limit={limit}")
+    db.commit()
+    return {"id": job.id, "job_type": job.job_type, "status": job.status, "limit": limit}
 
 
 @app.get("/jobs")
