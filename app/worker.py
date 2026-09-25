@@ -13,6 +13,10 @@ async def handle(job_type: str, payload: dict) -> None:
         from .main import _run_wanted_sync
         await _run_wanted_sync(full=bool(payload.get("full", False)), actor="worker")
         return
+    if job_type == "wanted_image_sync":
+        from .main import _run_wanted_image_sync
+        await _run_wanted_image_sync(limit=int(payload.get("limit", 250) or 250), actor="worker")
+        return
     if job_type == "health_probe":
         return
     raise RuntimeError(f"unsupported job type: {job_type}")
