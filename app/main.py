@@ -658,6 +658,39 @@ async def start_wanted_auto_sync():
     if int(os.getenv("WANTED_AUTO_SYNC_MINUTES", "60") or 60) >= 30:
         asyncio.create_task(_system_sync_wanted())
 
+async def _system_schedule_wanted_images():
+    interval = max(30, int(os.getenv("WANTED_IMAGE_SYNC_MINUTES", "60") or 60))
+    batch = max(50, min(int(os.getenv("WANTED_IMAGE_SYNC_BATCH", "500") or 500), 500))
+    while True:
+        try:
+            with SessionLocal() as db:
+                active_job = db.scalar(
+                    select(OperationalJob)
+                    .where(
+                        OperationalJob.job_type == "wanted_image_sync",
+                        OperationalJob.status.in_(["queued", "running"]),
+                    )
+                    .order_by(OperationalJob.id.desc())
+                )
+                if active_job is None:
+                    enqueue_job(db, "wanted_image_sync", {"limit": batch})
+        except Exception as exc:
+            with SessionLocal() as db:
+                db.add(AuditEvent(
+                    actor="system",
+                    action="wanted_image_sync_schedule_error",
+                    resource_type="wanted_source",
+                    detail=exc.__class__.__name__,
+                ))
+                db.commit()
+        await asyncio.sleep(interval * 60)
+
+
+@app.on_event("startup")
+async def start_wanted_image_sync_scheduler():
+    asyncio.create_task(_system_schedule_wanted_images())
+
+
 @app.on_event("startup")
 async def start_realtime_listener():
     if REDIS_URL:
