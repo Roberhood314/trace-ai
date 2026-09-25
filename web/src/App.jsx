@@ -155,7 +155,7 @@ export default function App() {
             <span>{user ? `${user.username || "User"} · ${user.role || ""}` : piReady ? "Đăng nhập Pi" : "Đăng nhập"}</span>
           </button>
           {!user && <button className="secondary-button" onClick={()=>setReviewerOpen(true)}>Reviewer</button>}
-          {user && <button className="secondary-button" onClick={deleteAccount}>Xóa tài khoản</button>}
+          {user && !user.reviewer && <button className="secondary-button" onClick={deleteAccount}>Xóa tài khoản</button>}
         </div>
       </header>
 
@@ -201,7 +201,7 @@ export default function App() {
               <div className="eyebrow">ACTIVE CASES</div>
               <h3>Hồ sơ đang xử lý</h3>
             </div>
-            <button className="primary-button" onClick={() => setShowCreate(true)}>+ Tạo vụ việc</button>
+            {!user?.reviewer && <button className="primary-button" onClick={() => setShowCreate(true)}>+ Tạo vụ việc</button>}
           </div>
 
           <div className="case-list">
@@ -246,8 +246,8 @@ export default function App() {
               ["zones", "Vùng tìm kiếm"],
               ["evidence", "Chứng cứ"],
               ["ai", "AI phân tích"],
-              ...(user && ["commander","admin"].includes(user.role) ? [["audit","Audit"]] : []),
-              ...(user?.role === "admin" ? [["admin","Quản trị"]] : [])
+              ...(user && ["commander","admin","reviewer"].includes(user.role) ? [["audit","Audit"]] : []),
+              ...(["admin","reviewer"].includes(user?.role) ? [["admin","Quản trị"]] : [])
             ].map(([key, label]) => (
               <button
                 key={key}
@@ -324,6 +324,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {user?.reviewer && <div className="notice" style={{margin:"12px 20px"}}>Google Play Reviewer Mode · chỉ đọc, không thay đổi dữ liệu production.</div>}
 
       {showCreate && (
         <CreateCaseModal
