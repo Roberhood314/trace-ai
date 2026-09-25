@@ -199,12 +199,17 @@ WANTED_SYNC_STATE = {
 
 app = FastAPI(
     title="TRACE-AI",
-    version="1.5.0-rc2",
-    description="Pi-ready MVP: hồ sơ vụ việc, timeline, vùng tìm kiếm, chứng cứ và trợ lý phân tích.",
+    version="2.0.0-rc1",
+    description="TRACE AI X: operational command platform with wanted intelligence, UAS fusion, geospatial workflows and human-verified analysis.",
 )
 
 allowed_origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if x.strip()]
-for origin in ("https://tracevnid.fyi", "https://www.tracevnid.fyi"):
+for origin in (
+    "https://tracevnid.fyi",
+    "https://www.tracevnid.fyi",
+    "https://localhost",
+    "capacitor://localhost",
+):
     if origin not in allowed_origins:
         allowed_origins.append(origin)
 
