@@ -64,9 +64,46 @@ jobs:
           grep -q 'versionCode 1' android/app/build.gradle
           grep -q 'versionName "1.0.0"' android/app/build.gradle
 
+      - name: Configure release signing
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        working-directory: web/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release.keystore
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("app/build.gradle")
+          s=p.read_text()
+          marker="android {"
+          signing="""android {
+              signingConfigs {
+                  release {
+                      storeFile file("release.keystore")
+                      storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+                  }
+              }
+          """
+          s=s.replace(marker, signing, 1)
+          s=s.replace("buildTypes {", "buildTypes {\n        release { signingConfig signingConfigs.release }", 1)
+          p.write_text(s)
+          PY
+
       - name: Build release AAB
         working-directory: web/android
         run: ./gradlew bundleRelease
+
+      - name: Verify signing when release secrets are configured
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        working-directory: web/android
+        run: |
+          jarsigner -verify -verbose -certs app/build/outputs/bundle/release/*.aab
+          test -s app/build/outputs/bundle/release/*.aab
 
       - name: Upload release AAB
         uses: actions/upload-artifact@v4
