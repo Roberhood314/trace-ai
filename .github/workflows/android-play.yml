@@ -58,7 +58,7 @@ jobs:
       - name: Configure Play release version
         working-directory: web
         run: |
-          sed -i -E 's/versionCode [0-9]+/versionCode 1/' android/app/build.gradle
+          sed -i -E 's/versionCode [0-9]+/versionCode 2/' android/app/build.gradle
           sed -i -E 's/versionName "[^"]+"/versionName "1.0.0"/' android/app/build.gradle
       - name: Configure release signing
         working-directory: web/android
