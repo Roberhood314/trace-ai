@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+import jwt
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -40,7 +41,7 @@ from .schemas import (
     UserOut, UserRoleUpdate,
     WantedRecordOut, WantedSyncOut,
 )
-from .security import CurrentUser, Role, get_current_user, issue_token, require_role
+from .security import CurrentUser, Role, _secret, get_current_user, issue_token, require_role
 from .services.wanted_sync import OFFICIAL_SUSPENDED_URL, OFFICIAL_WANTED_URL, SOURCE_NAME, fetch_official_wanted, iter_official_list_pages, parse_wanted_detail, record_checksum, utcnow_naive
 from .services.gateway import public_gateway_signals, public_gateway_status, response_units_snapshot, weather_snapshot
 from .services.uas_fusion import fusion_status, ingest_observation as fusion_ingest_observation, review_track as fusion_review_track, track_snapshot
