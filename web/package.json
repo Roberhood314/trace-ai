@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "android:run": "npm run build && cap run android"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -16,7 +19,13 @@
     "react-dom": "^19.0.0",
     "lucide-react": "^0.468.0",
     "leaflet": "^1.9.4",
-    "react-leaflet": "^5.0.0"
+    "react-leaflet": "^5.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/camera": "^7.0.0",
+    "@capacitor/geolocation": "^7.0.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
 }
