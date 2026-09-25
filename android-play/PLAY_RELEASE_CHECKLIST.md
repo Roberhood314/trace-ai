@@ -49,3 +49,16 @@
 - [ ] Add Android signing secrets in GitHub Actions.
 - [ ] Confirm successful signed AAB workflow artifact.
 - [ ] Upload AAB to Google Play Internal testing.
+
+
+## Final Google Play compliance pass — 2026-09-25
+- [x] External account-deletion web resource implemented at /delete-account.html.
+- [x] External deletion request API implemented; ownership verification required before deletion.
+- [x] Reviewer account elevated to read-only reviewer role for restricted read screens.
+- [x] Reviewer write operations blocked server-side.
+- [x] CI artifact explicitly marked as signed/unsigned in signing-state.txt.
+- [x] Data Safety declaration worksheet added to repository.
+- [ ] Configure Android upload/signing key secrets (account-owner action).
+- [ ] Configure PLAY_REVIEWER_USERNAME / PLAY_REVIEWER_PASSWORD in production environment.
+- [ ] Copy final Data Safety answers into Play Console.
+- [ ] Upload signed AAB to Internal testing and clear Pre-launch report.
