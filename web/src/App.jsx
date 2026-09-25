@@ -24,6 +24,7 @@ import AuditPanel from "./AuditPanel";
 import AdminPanel from "./AdminPanel";
 import WantedRadarPanel from "./WantedRadarPanel";
 import FusionCorePanel from "./FusionCorePanel";
+import SystemReadinessPanel from "./SystemReadinessPanel";
 import { deleteMyAccount, fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, reviewerLogin, testPaymentConfig } from "./api";
  
 
@@ -241,6 +242,7 @@ export default function App() {
               ["overview", "Tổng quan"],
               ["wanted", "Radar truy nã"],
               ["fusion", "UAS Fusion"],
+              ["readiness", "Hệ thống"],
               ["profile", "Hồ sơ"],
               ["timeline", "Timeline"],
               ["zones", "Vùng tìm kiếm"],
@@ -282,6 +284,10 @@ export default function App() {
 
           {tab === "fusion" && (
             <FusionCorePanel role={user?.role || "viewer"} />
+          )}
+
+          {tab === "readiness" && (
+            <SystemReadinessPanel />
           )}
 
           {tab === "profile" && (

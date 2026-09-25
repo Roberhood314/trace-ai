@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from PIL import Image
+from PIL import Image, ImageFilter, ImageStat
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
@@ -2018,6 +2018,208 @@ def wanted_source_status(
     user: CurrentUser = Depends(require_role(Role.VIEWER)),
 ):
     return _wanted_source_status(db)
+
+
+
+@app.get("/wanted/{wanted_id}/intelligence")
+def wanted_record_intelligence(
+    wanted_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    row = db.get(WantedRecord, wanted_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="wanted record not found")
+
+    source_host = (urlparse(row.detail_url or row.source_url or "").hostname or "").lower()
+    official_source = source_host == "truyna.bocongan.gov.vn"
+    fields = {
+        "full_name": bool(row.full_name),
+        "birth_year": row.birth_year is not None,
+        "registered_address": bool(row.registered_address),
+        "parents": bool(row.parents),
+        "offense": bool(row.offense),
+        "warrant_reference": bool(row.warrant_reference),
+        "issuing_unit": bool(row.issuing_unit),
+        "detail_url": bool(row.detail_url),
+        "image_reference": bool(row.image_url or row.detail_url),
+        "checksum": bool(row.checksum),
+    }
+    completeness = round(sum(1 for value in fields.values() if value) / len(fields) * 100)
+    history_count = db.scalar(
+        select(func.count(WantedRecordHistory.id)).where(WantedRecordHistory.wanted_record_id == wanted_id)
+    ) or 0
+
+    checks = []
+    if not official_source:
+        checks.append("Nguồn chi tiết cần được xác minh lại trước khi sử dụng nghiệp vụ.")
+    if not row.image_url:
+        checks.append("Ảnh chưa được lưu URL trực tiếp; hệ thống sẽ thử đọc ảnh từ hồ sơ nguồn chính thức khi mở.")
+    if not row.warrant_reference:
+        checks.append("Thiếu số/ngày quyết định truy nã trong bản ghi hiện tại.")
+    if not row.registered_address:
+        checks.append("Thiếu địa chỉ đăng ký thường trú trong bản ghi hiện tại.")
+    if not checks:
+        checks.append("Hồ sơ có độ đầy đủ cao; vẫn cần đối chiếu nguồn chính thức trước mọi quyết định.")
+
+    return {
+        "wanted_id": row.id,
+        "generated_at": datetime.now(timezone.utc),
+        "source": {
+            "name": row.source_name,
+            "url": row.detail_url or row.source_url,
+            "official_host": official_source,
+            "checksum_present": bool(row.checksum),
+            "history_events": int(history_count),
+            "last_seen_at": row.last_seen_at,
+            "source_updated_at": row.source_updated_at,
+        },
+        "record": {
+            "status": row.status,
+            "danger_level": row.danger_level,
+            "completeness_percent": completeness,
+            "field_presence": fields,
+        },
+        "analysis": {
+            "summary": (
+                f"Hồ sơ {row.full_name} hiện có mức đầy đủ dữ liệu {completeness}%. "
+                f"Trạng thái nguồn: {'chính thức' if official_source else 'cần xác minh'}. "
+                f"Hệ thống ghi nhận {int(history_count)} sự kiện lịch sử thay đổi."
+            ),
+            "recommended_checks": checks,
+            "identity_decision": "human_verification_required",
+        },
+        "disclaimer": "Phân tích hỗ trợ rà soát dữ liệu; không tự kết luận danh tính một người từ hình ảnh.",
+    }
+
+
+@app.get("/wanted/{wanted_id}/visual-analysis")
+async def wanted_record_visual_analysis(
+    wanted_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    row = db.get(WantedRecord, wanted_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="wanted record not found")
+
+    try:
+        image_response = await public_wanted_image(wanted_id, db)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return {
+                "wanted_id": wanted_id,
+                "available": False,
+                "quality_score": 0,
+                "reason": "official image not available",
+                "identity_decision": "human_verification_required",
+            }
+        raise
+
+    try:
+        with Image.open(io.BytesIO(image_response.body)) as image:
+            image = image.convert("RGB")
+            width, height = image.size
+            gray = image.convert("L")
+            stats = ImageStat.Stat(gray)
+            brightness = float(stats.mean[0])
+            contrast = float(stats.stddev[0])
+            edges = gray.filter(ImageFilter.FIND_EDGES)
+            edge_mean = float(ImageStat.Stat(edges).mean[0])
+    except Exception:
+        raise HTTPException(status_code=502, detail="official image analysis failed") from None
+
+    megapixels = (width * height) / 1_000_000
+    resolution_score = min(100.0, megapixels / 0.5 * 100.0)
+    brightness_score = max(0.0, 100.0 - abs(brightness - 128.0) / 128.0 * 100.0)
+    contrast_score = min(100.0, contrast / 55.0 * 100.0)
+    sharpness_score = min(100.0, edge_mean / 22.0 * 100.0)
+    quality_score = round(
+        resolution_score * 0.35
+        + brightness_score * 0.20
+        + contrast_score * 0.20
+        + sharpness_score * 0.25
+    )
+
+    observations = []
+    if resolution_score < 45:
+        observations.append("Độ phân giải thấp; không nên phóng lớn để suy luận chi tiết khuôn mặt.")
+    if brightness < 55:
+        observations.append("Ảnh tối; chi tiết vùng tối có thể không đáng tin cậy.")
+    elif brightness > 205:
+        observations.append("Ảnh sáng mạnh; một số chi tiết có thể bị mất.")
+    if contrast_score < 35:
+        observations.append("Độ tương phản thấp.")
+    if sharpness_score < 35:
+        observations.append("Độ sắc nét thấp hoặc ảnh có thể bị mờ.")
+    if not observations:
+        observations.append("Ảnh đủ chất lượng cho đối chiếu trực quan thủ công.")
+
+    return {
+        "wanted_id": wanted_id,
+        "available": True,
+        "dimensions": {"width": width, "height": height, "megapixels": round(megapixels, 3)},
+        "metrics": {
+            "brightness": round(brightness, 1),
+            "contrast": round(contrast, 1),
+            "edge_sharpness": round(edge_mean, 1),
+        },
+        "quality_score": quality_score,
+        "manual_comparison_ready": quality_score >= 55,
+        "observations": observations,
+        "identity_decision": "human_verification_required",
+        "disclaimer": "Chỉ đánh giá chất lượng ảnh và khả năng đối chiếu thủ công; không thực hiện nhận dạng sinh trắc học tự động.",
+    }
+
+
+@app.get("/system/readiness")
+async def system_readiness(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(Role.VIEWER)),
+):
+    integrations = await integration_status()
+    by_id = {item["id"]: item for item in integrations}
+    wanted_count = db.scalar(select(func.count(WantedRecord.id)).where(WantedRecord.status == "active")) or 0
+    fusion = fusion_status(db)
+
+    def connector_state(integration_id: str):
+        item = by_id.get(integration_id)
+        if not item:
+            return {"state": "not_configured", "detail": "connector definition unavailable"}
+        return {
+            "state": item.get("status", "not_configured"),
+            "detail": item.get("detail") or item.get("message"),
+            "last_seen": item.get("last_seen"),
+        }
+
+    modules = {
+        "wanted_registry": {
+            "state": "operational" if wanted_count > 0 else "degraded",
+            "records": int(wanted_count),
+            "detail": "Official wanted registry data available" if wanted_count > 0 else "No active wanted records loaded",
+        },
+        "wanted_image_proxy": {
+            "state": "operational",
+            "detail": "Official-source image proxy, cache and thumbnail pipeline enabled",
+        },
+        "wanted_visual_analysis": {
+            "state": "operational",
+            "detail": "Image quality analysis enabled; no automatic biometric identity conclusion",
+        },
+        "fusion_core": {
+            "state": "operational",
+            "detail": fusion.get("engine", "TRACE Fusion Core"),
+            "active_tracks": fusion.get("active_tracks", 0),
+        },
+        "vision_connector": connector_state("vision"),
+        "geo_connector": connector_state("geo"),
+        "airspace_connector": connector_state("air"),
+    }
+    return {
+        "generated_at": datetime.now(timezone.utc),
+        "modules": modules,
+        "principle": "Preserve → Extend → Validate → Upgrade",
+    }
 
 
 @app.get("/wanted/{wanted_id}/history")

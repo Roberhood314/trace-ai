@@ -131,3 +131,17 @@ export async function deleteMyAccount() {
   setSessionToken("");
   return result;
 }
+
+
+export async function fetchWantedIntelligence(wantedId) {
+  return request(`/wanted/${wantedId}/intelligence`);
+}
+export async function fetchWantedVisualAnalysis(wantedId) {
+  return request(`/wanted/${wantedId}/visual-analysis`);
+}
+export async function fetchSystemReadiness() {
+  return request("/system/readiness");
+}
+export function wantedImageUrl(wantedId, thumbnail = false) {
+  return `${API_BASE}/public/wanted/${wantedId}/${thumbnail ? "thumbnail" : "image"}`;
+}
