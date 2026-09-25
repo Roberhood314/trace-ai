@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image
@@ -30,7 +30,7 @@ except Exception:  # Redis remains optional for local/dev fallback.
     redis_async = None
 
 from .database import SessionLocal, engine, get_db
-from .models import AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, UASGeofence, UASObservation, UASReview, UASTrack, UASTrackPoint, User, WantedRecord, WantedRecordHistory
+from .models import AccountDeletionRequest, AuditEvent, Case, ConnectorDevice, Evidence, MissingPerson, OperationalJob, SearchZone, TimelineEvent, UASGeofence, UASObservation, UASReview, UASTrack, UASTrackPoint, User, WantedRecord, WantedRecordHistory
 from .schemas import (
     AISummaryOut, AuditOut, AuthOut,
     CaseCreate, CaseOut, EvidenceOut,
@@ -254,6 +254,20 @@ async def security_headers(request, call_next):
     return response
 
 @app.middleware("http")
+async def reviewer_read_only(request, call_next):
+    if request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+            try:
+                payload = jwt.decode(token, _secret(), algorithms=["HS256"])
+            except jwt.PyJWTError:
+                payload = {}
+            if payload.get("sub") == "play-reviewer":
+                return JSONResponse(status_code=403, content={"detail": "Google Play reviewer account is read-only"})
+    return await call_next(request)
+
+@app.middleware("http")
 async def public_read_cors(request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/public/"):
@@ -295,6 +309,10 @@ class DeviceUpdateRequest(BaseModel):
 class ReviewerLoginRequest(BaseModel):
     username: str
     password: str
+
+class AccountDeletionRequestCreate(BaseModel):
+    pi_username: str
+    contact_email: str
 
 class UASTestRequest(BaseModel):
     center_latitude: float = 10.7769
@@ -345,6 +363,30 @@ def _check_test_payment(payment: dict, user: CurrentUser):
         raise HTTPException(status_code=403, detail="payment does not match test purchase")
     if payment.get("status", {}).get("cancelled") or payment.get("status", {}).get("user_cancelled"):
         raise HTTPException(status_code=409, detail="payment cancelled")
+
+@app.post("/public/account-deletion-request")
+def request_account_deletion(payload: AccountDeletionRequestCreate, db: Session = Depends(get_db)):
+    username = payload.pi_username.strip()
+    email = payload.contact_email.strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{2,128}", username):
+        raise HTTPException(status_code=422, detail="invalid Pi username")
+    if not re.fullmatch(r"[^@\s]{1,128}@[^@\s]{1,128}\.[^@\s]{2,63}", email):
+        raise HTTPException(status_code=422, detail="invalid contact email")
+    token = secrets.token_hex(24)
+    row = AccountDeletionRequest(
+        pi_username=username,
+        contact_email=email,
+        status="pending",
+        request_token=token,
+    )
+    db.add(row)
+    db.commit()
+    return {
+        "accepted": True,
+        "request_id": row.id,
+        "message": "Yêu cầu xóa tài khoản đã được tiếp nhận. Chủ tài khoản sẽ được xác minh trước khi dữ liệu bị xóa.",
+    }
+
 
 @app.get("/pi/test-payment/config")
 def test_payment_config():
@@ -1249,11 +1291,11 @@ def reviewer_login(payload: ReviewerLoginRequest, db: Session = Depends(get_db))
     reviewer_uid = "play-reviewer"
     user = db.scalar(select(User).where(User.pi_uid == reviewer_uid))
     if not user:
-        user = User(pi_uid=reviewer_uid, username="Google Play Reviewer", role="viewer")
+        user = User(pi_uid=reviewer_uid, username="Google Play Reviewer", role="reviewer")
         db.add(user)
     else:
         user.username = "Google Play Reviewer"
-        user.role = "viewer"
+        user.role = "reviewer"
         user.is_active = True
     user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
