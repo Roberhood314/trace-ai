@@ -474,3 +474,16 @@ def test_wanted_visual_analysis_uses_official_image_pipeline(monkeypatch):
     assert body["dimensions"]["height"] == 1000
     assert 0 <= body["quality_score"] <= 100
     assert body["identity_decision"] == "human_verification_required"
+
+
+def test_capacitor_origin_cors():
+    response = client.options(
+        "/wanted",
+        headers={
+            "Origin": "https://localhost",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers.get("access-control-allow-origin") == "https://localhost"
