@@ -24,8 +24,8 @@ import AuditPanel from "./AuditPanel";
 import AdminPanel from "./AdminPanel";
 import WantedRadarPanel from "./WantedRadarPanel";
 import FusionCorePanel from "./FusionCorePanel";
-import { fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, testPaymentConfig } from "./api";
-import { demoCases, demoZones } from "./demoData";
+import { deleteMyAccount, fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, reviewerLogin, testPaymentConfig } from "./api";
+ 
 
 function Badge({ children, tone = "neutral" }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
@@ -45,12 +45,16 @@ function StatCard({ icon: Icon, label, value }) {
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [activeCase, setActiveCase] = useState(demoCases[0]);
+  const [activeCase, setActiveCase] = useState(null);
   const [tab, setTab] = useState("overview");
   const [piReady, setPiReady] = useState(false);
   const [paymentEnabled, setPaymentEnabled] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [reviewerOpen, setReviewerOpen] = useState(false);
+  const [reviewerUser, setReviewerUser] = useState("");
+  const [reviewerPassword, setReviewerPassword] = useState("");
+  const [reviewerError, setReviewerError] = useState("");
   const [liveCases, setLiveCases] = useState([]);
   const [person, setPerson] = useState(null);
   const [timeline, setTimeline] = useState([]);
@@ -78,7 +82,7 @@ export default function App() {
     }).catch(() => {});
   }, [activeCase?.dbId]);
 
-  const zoneScore = useMemo(() => zones.length ? Math.max(...zones.map(z=>z.score)) : Math.max(...demoZones.map(z=>z.score)), [zones]);
+  const zoneScore = useMemo(() => zones.length ? Math.max(...zones.map(z=>z.score)) : 0, [zones]);
 
   async function loadCases() {
     const rows = await fetchCases();
@@ -93,7 +97,7 @@ export default function App() {
       priority: "Mới"
     }));
     setLiveCases(mapped);
-    if (mapped.length) setActiveCase(mapped[0]);
+    setActiveCase(mapped[0] || null);
     return mapped;
   }
 
@@ -103,7 +107,34 @@ export default function App() {
       setUser(profile);
       await loadCases();
     } catch (error) {
-      alert("Không thể đăng nhập Pi hoặc tải dữ liệu lúc này.");
+      alert(error.message || "Không thể đăng nhập Pi hoặc tải dữ liệu lúc này.");
+    }
+  }
+
+  async function signInReviewer(event) {
+    event.preventDefault();
+    setReviewerError("");
+    try {
+      const profile = await reviewerLogin(reviewerUser, reviewerPassword);
+      setUser({ username: profile.username, role: profile.role, verified: true, reviewer: true });
+      setReviewerOpen(false);
+      setReviewerPassword("");
+      await loadCases();
+    } catch (error) {
+      setReviewerError(error.message || "Không thể đăng nhập tài khoản kiểm thử.");
+    }
+  }
+
+  async function deleteAccount() {
+    if (!window.confirm("Xóa tài khoản TRACE AI và dữ liệu cá nhân liên kết? Hành động này không thể hoàn tác.")) return;
+    try {
+      await deleteMyAccount();
+      setUser(null);
+      setActiveCase(null);
+      setLiveCases([]);
+      alert("Tài khoản đã được xóa.");
+    } catch (error) {
+      alert(error.message || "Không thể xóa tài khoản.");
     }
   }
 
@@ -118,10 +149,14 @@ export default function App() {
           </div>
         </div>
 
-        <button className="profile-button" onClick={signIn}>
-          <LogIn size={17} />
-          <span>{user ? `${user.username || "Pi User"} · ${user.role || ""}` : piReady ? "Đăng nhập Pi" : "Demo"}</span>
-        </button>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button className="profile-button" onClick={signIn}>
+            <LogIn size={17} />
+            <span>{user ? `${user.username || "User"} · ${user.role || ""}` : piReady ? "Đăng nhập Pi" : "Đăng nhập"}</span>
+          </button>
+          {!user && <button className="secondary-button" onClick={()=>setReviewerOpen(true)}>Reviewer</button>}
+          {user && <button className="secondary-button" onClick={deleteAccount}>Xóa tài khoản</button>}
+        </div>
       </header>
 
       {paymentEnabled && piReady && user?.verified && (
@@ -154,10 +189,10 @@ export default function App() {
         </section>
 
         <section className="stats-grid">
-          <StatCard icon={UserRoundSearch} label="Vụ việc đang mở" value={liveCases.length || 2} />
+          <StatCard icon={UserRoundSearch} label="Vụ việc đang mở" value={liveCases.length} />
           <StatCard icon={Camera} label="Chứng cứ" value={evidence.length} />
           <StatCard icon={MapPinned} label="Vùng ưu tiên" value={zones.length} />
-          <StatCard icon={Activity} label="Điểm tin cậy cao nhất" value={`${zoneScore}%`} />
+          <StatCard icon={Activity} label="Điểm tin cậy cao nhất" value={zones.length ? `${zoneScore}%` : "—"} />
         </section>
 
         <section className="panel">
@@ -170,7 +205,7 @@ export default function App() {
           </div>
 
           <div className="case-list">
-            {(liveCases.length ? liveCases : demoCases).map((item) => (
+            {liveCases.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveCase(item)}
@@ -188,10 +223,11 @@ export default function App() {
                 <ChevronRight className="case-arrow" size={18} />
               </button>
             ))}
+            {!liveCases.length && <div className="empty-card">Chưa có vụ việc. Đăng nhập và tạo dữ liệu thật để bắt đầu.</div>}
           </div>
         </section>
 
-        <section className="panel command-panel">
+        {activeCase && <section className="panel command-panel">
           <div className="panel-header">
             <div>
               <div className="eyebrow">COMMAND VIEW</div>
@@ -272,8 +308,22 @@ export default function App() {
           )}
           {tab === "admin" && (
             <AdminPanel />
-          )}        </section>
+          )}        </section>}
       </main>
+
+      {reviewerOpen && (
+        <div className="modal-backdrop" onMouseDown={()=>setReviewerOpen(false)}>
+          <div className="modal-card" onMouseDown={e=>e.stopPropagation()}>
+            <div className="modal-header"><div><div className="eyebrow">GOOGLE PLAY REVIEW</div><h3>Tài khoản kiểm thử</h3></div><button className="icon-button" onClick={()=>setReviewerOpen(false)}>×</button></div>
+            <form className="case-form" onSubmit={signInReviewer}>
+              <label>Tên đăng nhập<input required autoComplete="username" value={reviewerUser} onChange={e=>setReviewerUser(e.target.value)} /></label>
+              <label>Mật khẩu<input required type="password" autoComplete="current-password" value={reviewerPassword} onChange={e=>setReviewerPassword(e.target.value)} /></label>
+              {reviewerError && <div className="form-error">{reviewerError}</div>}
+              <button className="primary-button">Đăng nhập kiểm thử</button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showCreate && (
         <CreateCaseModal
@@ -296,10 +346,10 @@ export default function App() {
       )}
 
       <nav className="bottom-nav">
-        <button className="active"><Radar size={20} /><span>Trung tâm</span></button>
-        <button><MapPinned size={20} /><span>Bản đồ</span></button>
-        <button><Camera size={20} /><span>Dữ liệu</span></button>
-        <button><Bot size={20} /><span>AI</span></button>
+        <button className={tab==="overview"?"active":""} onClick={()=>setTab("overview")}><Radar size={20} /><span>Trung tâm</span></button>
+        <button className={tab==="zones"?"active":""} onClick={()=>setTab("zones")} disabled={!activeCase}><MapPinned size={20} /><span>Bản đồ</span></button>
+        <button className={tab==="evidence"?"active":""} onClick={()=>setTab("evidence")} disabled={!activeCase}><Camera size={20} /><span>Dữ liệu</span></button>
+        <button className={tab==="ai"?"active":""} onClick={()=>setTab("ai")} disabled={!activeCase}><Bot size={20} /><span>AI</span></button>
       </nav>
     </div>
   );
