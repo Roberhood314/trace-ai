@@ -3,13 +3,15 @@
 TRACE-AI là web app hỗ trợ quản lý vụ việc tìm kiếm/người mất tích, timeline dấu vết, bản đồ vùng tìm kiếm, chứng cứ và phân tích hỗ trợ. Frontend được thiết kế mobile-first cho Pi Browser/Pi App Studio; backend FastAPI đảm nhiệm xác thực, dữ liệu và audit.
 
 ## Release
-- Version: `1.5.0-rc2`
+- Version: `2.0.0-rc1`
 - Frontend: React + Vite + Leaflet + Pi SDK
 - Backend: FastAPI + SQLAlchemy
 - Dev DB: SQLite
 - Deployment DB: PostgreSQL/PostGIS-ready
 
 ## Chức năng
+- Wanted Intelligence Workspace: ảnh chính thức, 3D visualization, độ đầy đủ hồ sơ, kiểm tra nguồn/checksum/history và visual-quality analysis có human verification.
+- Live System Readiness: hiển thị trạng thái thực của wanted registry, image pipeline, Fusion Core và các connector Vision/Geo/Airspace.
 - Đăng nhập Pi SDK và xác minh token server-side.
 - Tài khoản nội bộ gắn Pi UID; role viewer/analyst/commander/admin.
 - Tạo và quản lý vụ việc.
@@ -65,7 +67,7 @@ npm run build
 
 **Bắt buộc:** đổi `APP_SECRET`, tắt `DEV_AUTH_BYPASS`, cấu hình HTTPS/CORS, khai báo bootstrap admin, dùng storage riêng cho evidence, cấu hình retention/backup và thay thông tin operator trong Privacy Policy.
 
-## Production controls (1.5.0-rc2 hardening)
+## Production controls (2.0.0-rc1 hardening)
 - Alembic revision `0003_security_operations` adds indexed queue lookup and tamper-evident audit hashes.
 - The worker recovers jobs abandoned by an interrupted deploy after a bounded lease.
 - API sessions are short-lived (30 minutes by default); public, write and login routes have app-level rate limits.
