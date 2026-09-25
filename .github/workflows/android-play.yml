@@ -1,74 +1,55 @@
 name: Android Play Bundle
-
 on:
   push:
-    branches: [android-play-production]
+    branches:
+      - android-play-production
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   android-bundle:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - uses: actions/setup-java@v4
+      - name: Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
-      - name: Install JS dependencies
-        run: npm ci
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install dependencies
+        working-directory: web
+        run: npm install
       - name: Build web
+        working-directory: web
         run: npm run build
-      - name: Generate Android project
+      - name: Generate Capacitor Android project
+        working-directory: web
         run: |
           rm -rf android
           npx cap add android
           npx cap sync android
-      - name: Enforce Play SDK 36 and release identity
+      - name: Configure API 36 and permissions
+        working-directory: web
         run: |
-          sed -i -E 's/compileSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/compileSdkVersion = 36/' android/variables.gradle || true
-          sed -i -E 's/targetSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/targetSdkVersion = 36/' android/variables.gradle || true
-          grep -q "compileSdkVersion = 36" android/variables.gradle
-          grep -q "targetSdkVersion = 36" android/variables.gradle
-      - name: Add runtime permissions
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p=Path("android/app/src/main/AndroidManifest.xml")
-          s=p.read_text()
-          marker="<application"
-          permissions='''    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-'''
-          if "android.permission.CAMERA" not in s:
-              s=s.replace(marker, permissions+"    "+marker, 1)
-          p.write_text(s)
-          PY
-      - name: Verify manifest permissions
-        run: |
-          grep -q "android.permission.CAMERA" android/app/src/main/AndroidManifest.xml
-          grep -q "android.permission.ACCESS_FINE_LOCATION" android/app/src/main/AndroidManifest.xml
-          if grep -q "ACCESS_BACKGROUND_LOCATION" android/app/src/main/AndroidManifest.xml; then
-            echo "Background location is not permitted for this release" >&2
-            exit 1
-          fi
-      - name: Build unsigned release AAB
+          sed -i -E 's/compileSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/compileSdkVersion = 36/' android/variables.gradle
+          sed -i -E 's/targetSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/targetSdkVersion = 36/' android/variables.gradle
+          python -c 'from pathlib import Path; p=Path("android/app/src/main/AndroidManifest.xml"); s=p.read_text(); perms="    <uses-permission android:name=\"android.permission.INTERNET\" />\\n    <uses-permission android:name=\"android.permission.CAMERA\" />\\n    <uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />\\n    <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />\\n"; p.write_text(s if "android.permission.CAMERA" in s else s.replace("<application",perms+"    <application",1))'
+          grep -q 'compileSdkVersion = 36' android/variables.gradle
+          grep -q 'targetSdkVersion = 36' android/variables.gradle
+          grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.ACCESS_FINE_LOCATION' android/app/src/main/AndroidManifest.xml
+          ! grep -q 'ACCESS_BACKGROUND_LOCATION' android/app/src/main/AndroidManifest.xml
+      - name: Build release AAB
         working-directory: web/android
         run: ./gradlew bundleRelease
-      - uses: actions/upload-artifact@v4
+      - name: Upload unsigned AAB
+        uses: actions/upload-artifact@v4
         with:
           name: trace-ai-x-unsigned-aab
           path: web/android/app/build/outputs/bundle/release/*.aab
