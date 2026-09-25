@@ -12,22 +12,41 @@ down_revision = "0006_uas_fusion_core"
 branch_labels = None
 depends_on = None
 
+_TABLE = "account_deletion_requests"
+_INDEXES = [
+    ("ix_account_deletion_requests_pi_username", ["pi_username"], False),
+    ("ix_account_deletion_requests_contact_email", ["contact_email"], False),
+    ("ix_account_deletion_requests_status", ["status"], False),
+    ("ix_account_deletion_requests_request_token", ["request_token"], True),
+    ("ix_account_deletion_requests_created_at", ["created_at"], False),
+]
+
 def upgrade():
-    op.create_table(
-        "account_deletion_requests",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("pi_username", sa.String(length=128), nullable=False),
-        sa.Column("contact_email", sa.String(length=255), nullable=False),
-        sa.Column("status", sa.String(length=24), nullable=False, server_default="pending"),
-        sa.Column("request_token", sa.String(length=64), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("processed_at", sa.DateTime(), nullable=True),
-    )
-    op.create_index("ix_account_deletion_requests_pi_username", "account_deletion_requests", ["pi_username"])
-    op.create_index("ix_account_deletion_requests_contact_email", "account_deletion_requests", ["contact_email"])
-    op.create_index("ix_account_deletion_requests_status", "account_deletion_requests", ["status"])
-    op.create_index("ix_account_deletion_requests_request_token", "account_deletion_requests", ["request_token"], unique=True)
-    op.create_index("ix_account_deletion_requests_created_at", "account_deletion_requests", ["created_at"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    if not inspector.has_table(_TABLE):
+        op.create_table(
+            _TABLE,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("pi_username", sa.String(length=128), nullable=False),
+            sa.Column("contact_email", sa.String(length=255), nullable=False),
+            sa.Column("status", sa.String(length=24), nullable=False, server_default="pending"),
+            sa.Column("request_token", sa.String(length=64), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=False),
+            sa.Column("processed_at", sa.DateTime(), nullable=True),
+        )
+
+    # Re-inspect because the table may have just been created, or may already
+    # exist from an older bootstrap path. Add only missing indexes.
+    inspector = sa.inspect(bind)
+    existing = {idx["name"] for idx in inspector.get_indexes(_TABLE)}
+    for name, columns, unique in _INDEXES:
+        if name not in existing:
+            op.create_index(name, _TABLE, columns, unique=unique)
 
 def downgrade():
-    op.drop_table("account_deletion_requests")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if inspector.has_table(_TABLE):
+        op.drop_table(_TABLE)
