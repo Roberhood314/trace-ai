@@ -15,10 +15,12 @@
 - [x] ACCESS_COARSE_LOCATION
 - [x] ACCESS_FINE_LOCATION
 - [x] Background location explicitly rejected by CI
-- [ ] In-app permission rationale/denial UX verified on device
+- [x] Native Camera/Geolocation permission requests implemented
+- [ ] In-app permission denial/retry UX verified on physical device
 - [ ] Privacy Policy final URL verified
 - [ ] Data Safety form completed from actual data flows
-- [ ] Account/data deletion flow verified if account creation is offered
+- [x] Account deletion API + in-app action implemented
+- [ ] Account/data deletion flow verified against production database
 
 ## Functional release test
 - [ ] Cold start
@@ -35,3 +37,15 @@
 - [ ] Pre-launch report clean
 - [ ] Closed/Open testing if required
 - [ ] Production rollout approval
+
+
+## Reviewer access
+- [x] Dedicated server-side Google Play reviewer login implemented.
+- [x] Demo Admin fallback removed from production frontend.
+- [ ] Configure PLAY_REVIEWER_USERNAME and PLAY_REVIEWER_PASSWORD in production.
+- [ ] Enter the same reviewer credentials/instructions in Play Console App access.
+
+## Remaining external gates
+- [ ] Add Android signing secrets in GitHub Actions.
+- [ ] Confirm successful signed AAB workflow artifact.
+- [ ] Upload AAB to Google Play Internal testing.
