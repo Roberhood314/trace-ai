@@ -544,3 +544,14 @@ def test_wanted_image_status_exposed():
     assert response.status_code == 200
     item = next(x for x in response.json() if x["id"] == wanted_id)
     assert item["image_status"] == "missing"
+
+
+def test_pi_sandbox_iframe_headers():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.headers.get("x-frame-options") is None
+    csp = response.headers.get("content-security-policy", "")
+    assert "frame-ancestors" in csp
+    assert "https://sandbox.minepi.com" in csp
+    assert "https://*.minepi.com" in csp
+    assert "https://*.pinet.com" in csp
