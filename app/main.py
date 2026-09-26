@@ -254,7 +254,11 @@ async def security_headers(request, call_next):
             or request.url.path.endswith("/image-data")
         )
     )
-    if image_public_path:
+    content_type = (response.headers.get("content-type") or "").lower()
+    if image_public_path or content_type.startswith("text/html"):
+        # Pi Sandbox embeds the app document cross-site. Allow the HTML document
+        # to load in that iframe; CSP frame-ancestors below still restricts
+        # which sites are allowed to frame TRACE.
         response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
     else:
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
