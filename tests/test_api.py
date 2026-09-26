@@ -558,17 +558,8 @@ def test_pi_sandbox_iframe_headers():
 
 
 
-def test_dashboard_root_and_pi_checkout_routes():
-    root = client.get("/")
-    assert root.status_code == 200
-    assert "text/html" in root.headers.get("content-type", "")
-
-    checkout = client.get("/pi-checkout")
-    assert checkout.status_code == 200
-    assert "TRACE-AI" in checkout.text
-    assert "pi-checkout.js" in checkout.text
-
-    script = client.get("/pi-checkout.js")
-    assert script.status_code == 200
-    assert "sandbox:isSandbox" in script.text
-    assert "window.location.href = '/'" in script.text
+def test_legacy_pi_checkout_routes_are_not_required():
+    # TRACE now authenticates from the main dashboard; the old Step-10 checkout
+    # page/script are intentionally not part of the backend contract.
+    assert client.get("/pi-checkout").status_code == 404
+    assert client.get("/pi-checkout.js").status_code == 404
