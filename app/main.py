@@ -2497,7 +2497,7 @@ def terms_of_service_page():
 
 # SoloHost/production web UI: API routes above keep precedence; static UI is mounted last.
 WEB_DIST_DIR = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist"))
-if WEB_DIST_DIR.exists():
+if (WEB_DIST_DIR / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(WEB_DIST_DIR), html=True), name="web")
 else:
     @app.get("/", include_in_schema=False)
