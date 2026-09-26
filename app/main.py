@@ -1135,6 +1135,14 @@ def pi_domain_validation_key():
 
 
 @app.get("/", include_in_schema=False)
+def web_dashboard_root():
+    index_path = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist")) / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="web app not built")
+
+
+@app.get("/pi-checkout", include_in_schema=False)
 def pi_checkout_entry(request: Request):
     host = (request.headers.get("host") or "").split(":")[0].lower()
     if host != "tracevnid.fyi":
