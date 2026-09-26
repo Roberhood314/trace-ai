@@ -563,3 +563,13 @@ def test_legacy_pi_checkout_routes_are_not_required():
     # page/script are intentionally not part of the backend contract.
     assert client.get("/pi-checkout").status_code == 404
     assert client.get("/pi-checkout.js").status_code == 404
+
+
+
+def test_auth_session_restore():
+    response = client.get("/auth/session", headers=VIEWER)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["verified"] is True
+    assert body["role"] == "viewer"
+    assert body["username"]
