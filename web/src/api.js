@@ -35,6 +35,19 @@ export async function verifyPiAccessToken(accessToken) {
   return result;
 }
 
+export async function restoreSession() {
+  if (!sessionToken) return null;
+  try {
+    return await request("/auth/session");
+  } catch (error) {
+    if (String(error?.message || "").toLowerCase().includes("auth") || String(error?.message || "").includes("401")) {
+      setSessionToken("");
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function testPaymentConfig() { return request("/pi/test-payment/config"); }
 export async function approveTestPayment(paymentId) {
   return request("/pi/test-payment/approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_id: paymentId }) });
