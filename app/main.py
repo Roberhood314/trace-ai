@@ -1134,152 +1134,6 @@ def pi_domain_validation_key():
     )
 
 
-@app.get("/", include_in_schema=False)
-def pi_checkout_entry(request: Request):
-    host = (request.headers.get("host") or "").split(":")[0].lower()
-    if host != "tracevnid.fyi":
-        index_path = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist")) / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path)
-        raise HTTPException(status_code=404, detail="web app not built")
-
-    html = """<!doctype html>
-<html lang="vi" translate="no">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="google" content="notranslate">
-  <title>TRACE-AI · Pi Payment</title>
-  <style>
-    body{font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:#0d1726;color:#eef4ff;margin:0;padding:24px}
-    .card{max-width:560px;margin:40px auto;background:#14233b;border:1px solid #29456f;border-radius:22px;padding:24px}
-    h1{margin:0 0 8px;font-size:30px} p{color:#b8c7dd;line-height:1.5}
-    button{width:100%;border:0;border-radius:14px;padding:16px 18px;font-size:18px;font-weight:700;margin-top:12px}
-    #login{background:#7a3fa0;color:white} #pay{background:#f6b83f;color:#24183a;display:none}
-    #status{margin-top:18px;min-height:48px;color:#d8e6f8;white-space:pre-wrap}
-    .ok{color:#70e0ad}.err{color:#ff9d9d}
-  </style>
-  <script src="https://sdk.minepi.com/pi-sdk.js"></script>
-</head>
-<body class="notranslate">
-  <div class="card">
-    <h1>TRACE-AI</h1>
-    <p>Hoàn tất xác thực Pi và giao dịch User-to-App 0,01 Test Pi cho bước 10.</p>
-    <button id="login">Đăng nhập Pi</button>
-    <button id="pay">Thanh toán 0,01 Test Pi</button>
-    <div id="status">Đang khởi tạo Pi SDK…</div>
-  </div>
-  <script src="/pi-checkout.js"></script>
-</body>
-</html>"""
-    return HTMLResponse(
-        html,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate",
-            "Content-Language": "vi",
-        },
-    )
-
-@app.get("/pi-checkout.js", include_in_schema=False)
-def pi_checkout_script():
-    script = r"""
-(function () {
-  const status = document.getElementById('status');
-  const login = document.getElementById('login');
-  const pay = document.getElementById('pay');
-  let token = '';
-
-  function msg(text, cls) {
-    status.textContent = text;
-    status.className = cls || '';
-  }
-
-  async function api(path, body) {
-    const res = await fetch(path, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', ...(token ? {'Authorization':'Bearer '+token} : {})},
-      body: JSON.stringify(body)
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || ('HTTP '+res.status));
-    return data;
-  }
-
-  try {
-    if (!window.Pi) throw new Error('Pi SDK chưa tải được. Hãy mở bằng Pi Browser.');
-    window.Pi.init({version:'2.0', sandbox:false});
-    msg('Pi SDK sẵn sàng. Bấm “Đăng nhập Pi”.');
-  } catch (e) {
-    msg(e.message || 'Không thể khởi tạo Pi SDK.', 'err');
-  }
-
-  login.addEventListener('click', async function () {
-    login.disabled = true;
-    msg('Đang mở xác thực Pi…');
-    try {
-      const incomplete = [];
-      const auth = await window.Pi.authenticate(['username','payments'], function (payment) {
-        if (payment && payment.identifier && payment.transaction && payment.transaction.txid) incomplete.push(payment);
-      });
-      const verified = await api('/auth/pi/verify', {access_token: auth.accessToken});
-      token = verified.token;
-      for (const p of incomplete) {
-        await api('/pi/test-payment/complete', {payment_id:p.identifier, txid:p.transaction.txid});
-      }
-      login.textContent = 'Đã đăng nhập: ' + (verified.username || 'Pi User');
-      pay.style.display = 'block';
-      msg('Đăng nhập thành công. Bấm “Thanh toán 0,01 Test Pi”.', 'ok');
-    } catch (e) {
-      login.disabled = false;
-      msg('Đăng nhập thất bại: ' + (e.message || e), 'err');
-    }
-  });
-
-  pay.addEventListener('click', function () {
-    if (!token) return msg('Hãy đăng nhập Pi trước.', 'err');
-    pay.disabled = true;
-    msg('Đang tạo giao dịch 0,01 Test Pi…');
-    try {
-      window.Pi.createPayment({
-        amount: 0.01,
-        memo: 'TRACE-AI - Step 10 User-to-App payment',
-        metadata: {purpose:'trace_ai_test'}
-      }, {
-        onReadyForServerApproval: async function (paymentId) {
-          try {
-            await api('/pi/test-payment/approve', {payment_id:paymentId});
-            msg('Backend đã approve. Hãy xác nhận giao dịch trong Pi Wallet.');
-          } catch (e) {
-            pay.disabled = false;
-            msg('Approve thất bại: '+(e.message || e), 'err');
-          }
-        },
-        onReadyForServerCompletion: async function (paymentId, txid) {
-          try {
-            await api('/pi/test-payment/complete', {payment_id:paymentId, txid:txid});
-            msg('GIAO DỊCH HOÀN TẤT ✓\nQuay lại Pi Developer để kiểm tra Step 10.', 'ok');
-          } catch (e) {
-            pay.disabled = false;
-            msg('Complete thất bại: '+(e.message || e), 'err');
-          }
-        },
-        onCancel: function () {
-          pay.disabled = false;
-          msg('Bạn đã hủy giao dịch.');
-        },
-        onError: function (e) {
-          pay.disabled = false;
-          msg('Pi Payment lỗi: '+((e && e.message) || e), 'err');
-        }
-      });
-    } catch (e) {
-      pay.disabled = false;
-      msg('Không thể tạo giao dịch: '+(e.message || e), 'err');
-    }
-  });
-})();"""
-    return Response(script, media_type="application/javascript", headers={"Cache-Control":"no-store"})
-
 @app.get("/privacy", include_in_schema=False)
 def privacy_alias():
     path = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist")) / "privacy.html"
@@ -1296,7 +1150,7 @@ def terms_alias():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.5.0-rc2"}
+    return {"status": "ok", "service": "trace-ai", "version": "2.0.0-rc1"}
 
 @app.get("/health/ready")
 def readiness():
@@ -2486,5 +2340,9 @@ def terms_of_service_page():
 
 # SoloHost/production web UI: API routes above keep precedence; static UI is mounted last.
 WEB_DIST_DIR = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist"))
-if WEB_DIST_DIR.exists():
+if (WEB_DIST_DIR / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(WEB_DIST_DIR), html=True), name="web")
+else:
+    @app.get("/", include_in_schema=False)
+    def development_root():
+        return HTMLResponse("<!doctype html><html><head><title>TRACE-AI</title></head><body><h1>TRACE-AI</h1></body></html>")

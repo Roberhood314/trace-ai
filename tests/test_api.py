@@ -555,3 +555,11 @@ def test_pi_sandbox_iframe_headers():
     assert "https://sandbox.minepi.com" in csp
     assert "https://*.minepi.com" in csp
     assert "https://*.pinet.com" in csp
+
+
+
+def test_legacy_pi_checkout_routes_are_not_required():
+    # TRACE now authenticates from the main dashboard; the old Step-10 checkout
+    # page/script are intentionally not part of the backend contract.
+    assert client.get("/pi-checkout").status_code == 404
+    assert client.get("/pi-checkout.js").status_code == 404

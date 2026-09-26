@@ -19,7 +19,12 @@ export function loadPiSdk() {
 export function initPi() {
   if (!window.Pi) return false;
   try {
-    const sandbox = String(import.meta.env.VITE_PI_SANDBOX ?? "true") === "true";
+    const configured = String(import.meta.env.VITE_PI_SANDBOX ?? "auto").toLowerCase();
+    const embeddedInPiSandbox =
+      window.location.hostname === "sandbox.minepi.com" ||
+      document.referrer.includes("sandbox.minepi.com") ||
+      window.top !== window.self;
+    const sandbox = configured === "true" || (configured !== "false" && embeddedInPiSandbox) || embeddedInPiSandbox;
     window.Pi.init({ version: "2.0", sandbox });
     return true;
   } catch {
