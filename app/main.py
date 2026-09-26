@@ -241,7 +241,9 @@ async def security_headers(request, call_next):
     if request.url.path == "/validation-key.txt":
         return response
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
+    # Pi Sandbox renders the app inside an iframe. Do not send X-Frame-Options
+    # because DENY/SAMEORIGIN would block sandbox.minepi.com. Framing is
+    # restricted with CSP frame-ancestors below to official Pi origins only.
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()")
     image_public_path = (
@@ -256,7 +258,7 @@ async def security_headers(request, call_next):
         response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
     else:
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
-    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'self' https://sdk.minepi.com; connect-src 'self' https://api.minepi.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; script-src 'self' https://sdk.minepi.com; connect-src 'self' https://api.minepi.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self' https://sandbox.minepi.com https://*.minepi.com https://*.pinet.com; base-uri 'self'")
     return response
 
 @app.middleware("http")
