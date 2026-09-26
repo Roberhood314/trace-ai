@@ -1236,6 +1236,15 @@ async def verify_pi_user(payload: PiVerifyRequest, db: Session = Depends(get_db)
     db.refresh(user)
     return AuthOut(token=issue_token(user), username=user.username, role=user.role, verified=True)
 
+@app.get("/auth/session")
+def auth_session(user: CurrentUser = Depends(get_current_user)):
+    return {
+        "username": user.username,
+        "role": user.role.value,
+        "verified": True,
+    }
+
+
 @app.get("/users", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db), user: CurrentUser = Depends(require_role(Role.ADMIN))):
     return list(db.scalars(select(User).order_by(User.created_at.asc())).all())

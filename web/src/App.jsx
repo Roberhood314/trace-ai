@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   UserRoundSearch
 } from "lucide-react";
-import { authenticatePi, loadPiSdk, startTestPayment } from "./pi";
+import { authenticatePi, isPiEmbeddedEnvironment, loadPiSdk, startTestPayment } from "./pi";
 import MapPanel from "./MapPanel";
 import CreateCaseModal from "./CreateCaseModal";
 import PersonPanel from "./PersonPanel";
@@ -25,7 +25,7 @@ import AdminPanel from "./AdminPanel";
 import WantedRadarPanel from "./WantedRadarPanel";
 import FusionCorePanel from "./FusionCorePanel";
 import SystemReadinessPanel from "./SystemReadinessPanel";
-import { deleteMyAccount, fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, reviewerLogin, testPaymentConfig } from "./api";
+import { deleteMyAccount, fetchCases, fetchEvidence, fetchPerson, fetchTimeline, fetchZones, restoreSession, reviewerLogin, testPaymentConfig } from "./api";
  
 
 function Badge({ children, tone = "neutral" }) {
@@ -63,9 +63,49 @@ export default function App() {
   const [evidence, setEvidence] = useState([]);
 
   useEffect(() => {
-    loadPiSdk().then(setPiReady);
-    testPaymentConfig().then(({ enabled }) => setPaymentEnabled(enabled)).catch(() => {});
-    loadCases().catch(() => {});
+    let cancelled = false;
+
+    async function bootstrapAuth() {
+      testPaymentConfig().then(({ enabled }) => {
+        if (!cancelled) setPaymentEnabled(enabled);
+      }).catch(() => {});
+
+      const sdkReady = await loadPiSdk().catch(() => false);
+      if (cancelled) return;
+      setPiReady(Boolean(sdkReady));
+
+      try {
+        const restored = await restoreSession();
+        if (cancelled) return;
+        if (restored?.verified) {
+          setUser({
+            username: restored.username,
+            role: restored.role,
+            verified: true,
+            demo: false,
+          });
+          await loadCases();
+          return;
+        }
+      } catch {
+        // Fall through to Pi authentication.
+      }
+
+      if (sdkReady && isPiEmbeddedEnvironment() && sessionStorage.getItem("trace_pi_auto_auth_attempted") !== "1") {
+        sessionStorage.setItem("trace_pi_auto_auth_attempted", "1");
+        try {
+          const profile = await authenticatePi();
+          if (cancelled) return;
+          setUser(profile);
+          await loadCases();
+        } catch (error) {
+          console.warn("TRACE Pi auto-auth failed:", error?.message || error);
+        }
+      }
+    }
+
+    bootstrapAuth();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
