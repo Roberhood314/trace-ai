@@ -2499,3 +2499,7 @@ def terms_of_service_page():
 WEB_DIST_DIR = Path(os.getenv("WEB_DIST_DIR", "/app/web-dist"))
 if WEB_DIST_DIR.exists():
     app.mount("/", StaticFiles(directory=str(WEB_DIST_DIR), html=True), name="web")
+else:
+    @app.get("/", include_in_schema=False)
+    def development_root():
+        return HTMLResponse("<!doctype html><html><head><title>TRACE-AI</title></head><body><h1>TRACE-AI</h1></body></html>")
