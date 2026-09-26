@@ -555,3 +555,20 @@ def test_pi_sandbox_iframe_headers():
     assert "https://sandbox.minepi.com" in csp
     assert "https://*.minepi.com" in csp
     assert "https://*.pinet.com" in csp
+
+
+
+def test_dashboard_root_and_pi_checkout_routes():
+    root = client.get("/")
+    assert root.status_code == 200
+    assert "text/html" in root.headers.get("content-type", "")
+
+    checkout = client.get("/pi-checkout")
+    assert checkout.status_code == 200
+    assert "TRACE-AI" in checkout.text
+    assert "pi-checkout.js" in checkout.text
+
+    script = client.get("/pi-checkout.js")
+    assert script.status_code == 200
+    assert "sandbox:isSandbox" in script.text
+    assert "window.location.href = '/'" in script.text
