@@ -1207,7 +1207,8 @@ def pi_checkout_script():
 
   try {
     if (!window.Pi) throw new Error('Pi SDK chưa tải được. Hãy mở bằng Pi Browser.');
-    window.Pi.init({version:'2.0', sandbox:false});
+    const isSandbox = window.location.hostname === 'sandbox.minepi.com' || window.top !== window.self;
+    window.Pi.init({version:'2.0', sandbox:isSandbox});
     msg('Pi SDK sẵn sàng. Bấm “Đăng nhập Pi”.');
   } catch (e) {
     msg(e.message || 'Không thể khởi tạo Pi SDK.', 'err');
@@ -1228,7 +1229,9 @@ def pi_checkout_script():
       }
       login.textContent = 'Đã đăng nhập: ' + (verified.username || 'Pi User');
       pay.style.display = 'block';
-      msg('Đăng nhập thành công. Bấm “Thanh toán 0,01 Test Pi”.', 'ok');
+      msg('Đăng nhập thành công. Đang mở TRACE AI Dashboard…', 'ok');
+      try { sessionStorage.setItem('trace_pi_token', token); } catch (_) {}
+      setTimeout(function () { window.location.href = '/'; }, 350);
     } catch (e) {
       login.disabled = false;
       msg('Đăng nhập thất bại: ' + (e.message || e), 'err');
@@ -1296,7 +1299,7 @@ def terms_alias():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "trace-ai", "version": "1.5.0-rc2"}
+    return {"status": "ok", "service": "trace-ai", "version": "2.0.0-rc1"}
 
 @app.get("/health/ready")
 def readiness():
