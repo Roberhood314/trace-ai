@@ -2,6 +2,19 @@ import { approveTestPayment, completeTestPayment, setSessionToken, verifyPiAcces
 
 let piSdkPromise;
 
+export function isPiEmbeddedEnvironment() {
+  try {
+    return (
+      window.location.hostname === "sandbox.minepi.com" ||
+      document.referrer.includes("sandbox.minepi.com") ||
+      /PiBrowser/i.test(navigator.userAgent || "") ||
+      window.top !== window.self
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function loadPiSdk() {
   if (window.Pi) return Promise.resolve(initPi());
   if (piSdkPromise) return piSdkPromise;
@@ -20,10 +33,7 @@ export function initPi() {
   if (!window.Pi) return false;
   try {
     const configured = String(import.meta.env.VITE_PI_SANDBOX ?? "auto").toLowerCase();
-    const embeddedInPiSandbox =
-      window.location.hostname === "sandbox.minepi.com" ||
-      document.referrer.includes("sandbox.minepi.com") ||
-      window.top !== window.self;
+    const embeddedInPiSandbox = isPiEmbeddedEnvironment();
     const sandbox = configured === "true" || (configured !== "false" && embeddedInPiSandbox) || embeddedInPiSandbox;
     window.Pi.init({ version: "2.0", sandbox });
     return true;
