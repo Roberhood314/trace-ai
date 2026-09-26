@@ -1124,7 +1124,7 @@ async def uas_status(user: CurrentUser = Depends(require_role(Role.VIEWER))):
 def pi_domain_validation_key():
     # Return the Pi Developer Portal validation key exactly, without a BOM or newline.
     return Response(
-        content=b"daf9e8ccfb57f1861b9d986fc6c8b9aec8ae95d01766627062dc5ad131206304034979f296a1e9c36b374f9e5a3f3b80a95e905dc09af21b3b883ca26f9bda7e",
+        content=b"6b1682d3a589e6abbfaecb28c5f70af7bb623169a8f07478fc2a7a0d5190c8cfee64d411411f7f2affb2d45873a7dafc98ab998a1e8dc091d5bf4d13e1dc9b50",
         headers={
             "Content-Type": "text/plain",
             "Cache-Control": "no-store, no-cache, must-revalidate",
