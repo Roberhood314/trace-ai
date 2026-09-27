@@ -226,8 +226,11 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_origin_regex=origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Role"],
+    # Pi Browser/Sandbox preflight may include SDK/WebView-specific request
+    # headers. Keep origins restricted above, but do not reject a valid Pi
+    # login before /auth/pi/verify reaches the application.
+    allow_methods=["*"],
+    allow_headers=["*"],
     max_age=600,
 )
 
