@@ -236,6 +236,26 @@ app.add_middleware(
 
 app.middleware("http")(metrics_middleware)
 
+# Pi Browser can send a WebView preflight Origin that is not stable across
+# Sandbox/Mainnet. Handle only the Pi auth preflight explicitly here so it
+# reaches the POST verifier, while leaving the normal CORS policy in place for
+# every other endpoint.
+@app.middleware("http")
+async def pi_auth_preflight(request, call_next):
+    if request.method == "OPTIONS" and request.url.path == "/auth/pi/verify":
+        origin = request.headers.get("origin", "")
+        requested_headers = request.headers.get("access-control-request-headers", "authorization, content-type")
+        response = Response(status_code=204)
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = requested_headers
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Max-Age"] = "600"
+        return response
+    return await call_next(request)
+
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
