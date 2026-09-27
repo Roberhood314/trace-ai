@@ -91,14 +91,16 @@ export default function App() {
         // Fall through to Pi authentication.
       }
 
-      if (sdkReady && isPiEmbeddedEnvironment() && sessionStorage.getItem("trace_pi_auto_auth_attempted") !== "1") {
-        sessionStorage.setItem("trace_pi_auto_auth_attempted", "1");
+      if (sdkReady && isPiEmbeddedEnvironment()) {
+        // Do not permanently suppress auto-auth after a transient Pi/CORS failure.
+        // A successful backend verification is the source of truth for session state.
         try {
           const profile = await authenticatePi();
           if (cancelled) return;
           setUser(profile);
           await loadCases();
         } catch (error) {
+          sessionStorage.setItem("trace_pi_auto_auth_attempted", "1");
           console.warn("TRACE Pi auto-auth failed:", error?.message || error);
         }
       }
