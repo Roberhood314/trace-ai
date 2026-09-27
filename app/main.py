@@ -254,7 +254,20 @@ async def pi_auth_preflight(request, call_next):
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Max-Age"] = "600"
         return response
-    return await call_next(request)
+
+    response = await call_next(request)
+    # Pi App Studio/Pi Browser can host the app from a generated iframe origin.
+    # The verifier is bearer-token based, so expose only this endpoint's response
+    # to the requesting origin. Without this header the server returns 200 but
+    # WebKit blocks JavaScript from reading the JWT, which appears as a false
+    # "backend verification failed" error in the client.
+    if request.method == "POST" and request.url.path == "/auth/pi/verify":
+        origin = request.headers.get("origin", "")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+    return response
 
 @app.middleware("http")
 async def security_headers(request, call_next):
